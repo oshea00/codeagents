@@ -10,6 +10,3 @@ wheels/
 .venv
 
 src/
-agentic_flow_results.json
-Dockerfile
-requirements.txt
