@@ -1,0 +1,29 @@
+Create simple fastapi API that gets forecasts from api.weather.gov using a location specified using city/state, or lat/lon.
+
+fastapi should be configured to handle 301 redirect properly.
+
+
+Examples of using the API
+The API uses linked data to allow applications to discover content. Similar to a web site that provides HTML links to help users navigate to each page, linked data helps applications navigate to each endpoint. You may also review the OPEN API specification on the "Specification" tab on this page, or directly using the specification endpoint (that is also used to create the tab presentation): https://api.weather.gov/openapi.json.
+
+How do I get the forecast?
+Forecasts are created at each NWS Weather Forecast Office (WFO) on their own grid definition, at a resolution of about 2.5km x 2.5km. The API endpoint for the 12h forecast periods at a specific grid location is formatted as:
+
+	https://api.weather.gov/gridpoints/{office}/{gridX},{gridY}/forecast
+For example: https://api.weather.gov/gridpoints/TOP/31,80/forecast
+
+To obtain the grid forecast for a point location, use the /points endpoint to retrieve the current grid forecast endpoint by coordinates:
+
+	https://api.weather.gov/points/{latitude},{longitude}
+For example: https://api.weather.gov/points/39.7456,-97.0892
+
+This will provide the grid forecast endpoints for three format options in these properties:
+
+forecast - forecast for 12h periods over the next seven days
+forecastHourly - forecast for hourly periods over the next seven days
+forecastGridData - raw forecast data over the next seven days
+Note: at this time coastal marine grid forecasts are only available from the forecastGridData property.
+
+Applications may cache the grid for a location to improve latency and reduce the additional lookup request; however, it is important to note that while it generally does not occur often, the gridX and gridY values (and even the office) for a given coordinate may occasionally change. For this reason, it is necessary to check back to the /points endpoint periodically for the latest office/grid mapping.
+
+The /points endpoint also contains information about the issuing office, observation stations, and zones for a given point location.

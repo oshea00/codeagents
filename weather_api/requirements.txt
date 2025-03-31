@@ -1,0 +1,7 @@
+fastapi
+geopy
+httpx
+pydantic
+pytest
+pytest-asyncio
+uvicorn
