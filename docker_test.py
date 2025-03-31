@@ -13,7 +13,11 @@ class PythonPackageAnalyzer:
     """
 
     def __init__(
-        self, src_dir=None, python_code=None, filename=None, python_version=""
+        self,
+        src_dir=None,
+        python_code=None,
+        filename=None,
+        python_version="3.11",
     ):
         """
         Initialize the analyzer with a source directory, Python code as a string, or a Python file.
@@ -28,9 +32,13 @@ class PythonPackageAnalyzer:
 
         if src_dir is not None:
             self.src_dir = Path(src_dir)
-            self.files = list(self.src_dir.glob("**/*.py"))
+            self.files = list(
+                self.src_dir.glob("**/*.py")
+            )
             if not self.files:
-                print(f"Warning: No Python files found in {src_dir}")
+                print(
+                    f"Warning: No Python files found in {src_dir}"
+                )
         elif python_code is not None:
             self.code = python_code
             self.source_filename = None
@@ -68,19 +76,29 @@ class PythonPackageAnalyzer:
 
                 # Also check for package names (directory containing __init__.py)
                 parent_dir = file_path.parent
-                if (parent_dir / "__init__.py").exists():
-                    local_module_names.add(parent_dir.name)
+                if (
+                    parent_dir / "__init__.py"
+                ).exists():
+                    local_module_names.add(
+                        parent_dir.name
+                    )
 
         # Analyze Python files for imports
         if hasattr(self, "src_dir") and self.files:
             # Analyze all Python files in the source directory
             for file_path in self.files:
                 try:
-                    with open(file_path, "r", encoding="utf-8") as f:
+                    with open(
+                        file_path,
+                        "r",
+                        encoding="utf-8",
+                    ) as f:
                         code = f.read()
                     self._analyze_code(code)
                 except Exception as e:
-                    print(f"Error analyzing {file_path}: {e}")
+                    print(
+                        f"Error analyzing {file_path}: {e}"
+                    )
         else:
             # Analyze a single code string
             self._analyze_code(self.code)
@@ -89,11 +107,14 @@ class PythonPackageAnalyzer:
         self._find_python_version()
 
         # Remove local modules from required packages
-        self.required_packages = self.required_packages - local_module_names
+        self.required_packages = (
+            self.required_packages - local_module_names
+        )
 
         # Apply package aliases
         self.required_packages = {
-            self.package_aliases.get(pkg, pkg) for pkg in self.required_packages
+            self.package_aliases.get(pkg, pkg)
+            for pkg in self.required_packages
         }
 
         return self.required_packages
@@ -105,6 +126,8 @@ class PythonPackageAnalyzer:
         Args:
             code (str): Python code to analyze
         """
+        self.required_packages.add("pytest-asyncio")
+
         try:
             tree = ast.parse(code)
 
@@ -114,19 +137,33 @@ class PythonPackageAnalyzer:
                 if isinstance(node, ast.Import):
                     for name in node.names:
                         # Extract the base package name (e.g., 'numpy' from 'numpy.random')
-                        package = name.name.split(".")[0]
-                        if not self._is_standard_library(package):
-                            self.required_packages.add(package)
+                        package = name.name.split(".")[
+                            0
+                        ]
+                        if not self._is_standard_library(
+                            package
+                        ):
+                            self.required_packages.add(
+                                package
+                            )
 
                 # Handle 'from package import module' statements
                 elif isinstance(node, ast.ImportFrom):
                     if node.module:
                         # Extract the base package name
-                        package = node.module.split(".")[0]
-                        if not self._is_standard_library(package):
-                            self.required_packages.add(package)
+                        package = node.module.split(
+                            "."
+                        )[0]
+                        if not self._is_standard_library(
+                            package
+                        ):
+                            self.required_packages.add(
+                                package
+                            )
         except SyntaxError as e:
-            print(f"Error: Could not parse Python code. Syntax error: {e}")
+            print(
+                f"Error: Could not parse Python code. Syntax error: {e}"
+            )
             return set()
 
     def _is_standard_library(self, package_name):
@@ -210,13 +247,23 @@ class PythonPackageAnalyzer:
             if hasattr(self, "src_dir") and self.files:
                 for file_path in self.files:
                     try:
-                        with open(file_path, "r", encoding="utf-8") as f:
+                        with open(
+                            file_path,
+                            "r",
+                            encoding="utf-8",
+                        ) as f:
                             code = f.read()
-                        self._check_python_version_features(code)
+                        self._check_python_version_features(
+                            code
+                        )
                     except Exception as e:
-                        print(f"Error checking Python version in {file_path}: {e}")
+                        print(
+                            f"Error checking Python version in {file_path}: {e}"
+                        )
             else:
-                self._check_python_version_features(self.code)
+                self._check_python_version_features(
+                    self.code
+                )
 
     def _check_python_version_features(self, code):
         """
@@ -227,21 +274,36 @@ class PythonPackageAnalyzer:
         """
         # Check for f-strings (Python 3.6+)
         if re.search(r'f["\']', code):
-            self.python_version = max(self.python_version, "3.6")
+            self.python_version = max(
+                self.python_version, "3.6"
+            )
 
         # Check for type annotations (common in Python 3.7+)
-        if re.search(r": (?:str|int|float|bool|list|dict|set|tuple)", code):
-            self.python_version = max(self.python_version, "3.7")
+        if re.search(
+            r": (?:str|int|float|bool|list|dict|set|tuple)",
+            code,
+        ):
+            self.python_version = max(
+                self.python_version, "3.7"
+            )
 
         # Check for walrus operator (Python 3.8+)
         if re.search(r":=", code):
-            self.python_version = max(self.python_version, "3.8")
+            self.python_version = max(
+                self.python_version, "3.8"
+            )
 
         # Check for pattern matching (Python 3.10+)
-        if re.search(r"match .+:", code) and re.search(r"case .+:", code):
-            self.python_version = max(self.python_version, "3.10")
+        if re.search(r"match .+:", code) and re.search(
+            r"case .+:", code
+        ):
+            self.python_version = max(
+                self.python_version, "3.10"
+            )
 
-    def generate_dockerfile(self, output_file="Dockerfile"):
+    def generate_dockerfile(
+        self, output_file="Dockerfile"
+    ):
         """
         Generate a Dockerfile that installs the required packages and pytest.
         It copies all Python files from the source directory to the Docker container.
@@ -256,7 +318,9 @@ class PythonPackageAnalyzer:
             self.analyze()
 
         # Format the package list for requirements.txt
-        packages_list = "\n".join(sorted(self.required_packages))
+        packages_list = "\n".join(
+            sorted(self.required_packages)
+        )
 
         # Create Dockerfile content
         dockerfile = f"""# Use Python {self.python_version} as the base image
@@ -306,7 +370,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Analyze Python code and generate a Dockerfile with required packages"
     )
-    parser.add_argument("src_dir", help="Directory containing Python files to analyze")
+    parser.add_argument(
+        "src_dir",
+        help="Directory containing Python files to analyze",
+    )
     parser.add_argument(
         "-o",
         "--output",
@@ -322,23 +389,37 @@ if __name__ == "__main__":
 
     # Create analyzer with source directory
     analyzer = PythonPackageAnalyzer(
-        src_dir=args.src_dir, python_version=args.python if args.python else ""
+        src_dir=args.src_dir,
+        python_version=(
+            args.python if args.python else ""
+        ),
     )
 
     # Analyze code and get required packages
     required_packages = analyzer.analyze()
-    print(f"Found {len(required_packages)} required packages:")
+    print(
+        f"Found {len(required_packages)} required packages:"
+    )
     for package in sorted(required_packages):
         print(f"  - {package}")
 
     # Generate Dockerfile
-    dockerfile = analyzer.generate_dockerfile(output_file=args.output)
-    print(f"\nGenerated {args.output} and requirements.txt")
-    print(f"Python version detected: {analyzer.python_version}")
+    dockerfile = analyzer.generate_dockerfile(
+        output_file=args.output
+    )
+    print(
+        f"\nGenerated {args.output} and requirements.txt"
+    )
+    print(
+        f"Python version detected: {analyzer.python_version}"
+    )
 
     # Print excluded local modules
     if hasattr(analyzer, "src_dir") and analyzer.files:
-        local_modules = {file_path.stem for file_path in analyzer.files}
+        local_modules = {
+            file_path.stem
+            for file_path in analyzer.files
+        }
         local_packages = set()
         for file_path in analyzer.files:
             parent_dir = file_path.parent
@@ -346,8 +427,12 @@ if __name__ == "__main__":
                 local_packages.add(parent_dir.name)
 
         print("\nExcluded local modules/packages:")
-        for module in sorted(local_modules.union(local_packages)):
+        for module in sorted(
+            local_modules.union(local_packages)
+        ):
             print(f"  - {module}")
 
     print("\nTo build the Docker image, run:")
-    print(f"  docker build -t my-python-app -f {args.output} .")
+    print(
+        f"  docker build -t my-python-app -f {args.output} ."
+    )

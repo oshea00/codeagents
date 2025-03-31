@@ -7,6 +7,12 @@ requires-python = ">=3.12"
 dependencies = [
     "anthropic>=0.49.0",
     "argparse>=1.4.0",
+    "cachetools>=5.5.2",
+    "fastapi>=0.115.12",
+    "geopy>=2.4.1",
     "openai>=1.69.0",
+    "python-dotenv>=1.1.0",
     "sympy>=1.13.3",
+    "uszipcode>=1.0.1",
+    "uvicorn>=0.34.0",
 ]
