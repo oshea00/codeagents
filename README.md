@@ -9,16 +9,24 @@ The description given to the program for the calculator program:
 
 The resulting code is in the ```calculator_dir```
 
+# Example of creating a weather API
+
+The description given to the program for the api program is in ```problem.txt```
+The resulting code is in the ```weather_api```
+
 # Instructions for use
 
 ## Prerequisites
 - Docker 
 - OPENAI_API_KEY
 - Python environment has ```openai``` package.
+- ```uv``` utility.
 
-Run the script:
+How to run the script (from root of project directory):
 ```
-python3 agents_from_scratch_docker.py
+uv sync
+source .venv/bin/activate
+python agents_from_scratch_docker.py -h
 ```
 
 Answer the prompts.
