@@ -260,7 +260,7 @@ Create a complete test suite that:
 4. Can be executed directly
 5. Includes proper assertions and validations
 6. When comparing floating point numbers to numeric literals, use floating point literals.
-7. The test suite should import components to test from the 'implementation.py' file.
+7. The test suite should import components to test from the 'main.py' file.
 
 Return ONLY the test code, with no explanations or other text."""
 
@@ -566,18 +566,7 @@ Please provide a complete revised implementation that addresses all the issues m
 
 
 # Example usage
-if __name__ == "__main__":
-    # Set your OpenAI API key here or as an environment variable
-    # os.environ["OPENAI_API_KEY"] = "your-api-key"
-    
-    # Check if API key is set
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("⚠️ Warning: OPENAI_API_KEY environment variable is not set.")
-        print("Please set your API key using:")
-        print("export OPENAI_API_KEY='your-api-key'")
-        print("Or set it in the code.")
-        exit(1)
-    
+if __name__ == "__main__":    
     print("🤖 Agentic Flow - Software Development System")
     print("--------------------------------------------")
     
@@ -586,7 +575,18 @@ if __name__ == "__main__":
     parser.add_argument('--description-file', type=str, help='Path to a file containing the problem description.')
     parser.add_argument('--max-iterations', type=int, default=3, help='Maximum number of test-fix iterations (default: 3).')
     args = parser.parse_args()
-    
+
+    # Setup correct client based on user input
+    chosen_provider = input("🌐 Choose LLM provider (openai, anthropic): ").strip().lower()
+    if chosen_provider == "anthropic":
+        client = MultiLLMClient(provider="anthropic")
+    elif chosen_provider == "openai":
+        client = MultiLLMClient(provider="openai")
+    else:
+        print("Invalid provider selected. Defaulting to OpenAI.")
+        client = MultiLLMClient(provider="openai")
+
+    print(f"Using LLM provider: {client.provider_name}")
     # Load problem description
     if args.description_file:
         try:
