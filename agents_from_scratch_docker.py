@@ -40,8 +40,8 @@ class Agent:
 
         response_text = ""
         for chunk in response:
-            if chunk.choices and chunk['choices'][0]['delta'].get('content'):
-                response_text += chunk['choices'][0]['delta']['content']
+            if chunk.choices and chunk.choices[0].delta.content:
+                response_text += chunk.choices[0].delta.content
 
         self.add_to_history("assistant", response_text)
         
@@ -175,8 +175,8 @@ Your response MUST be a JSON object with the following structure:
             
             response_text = ""
             for chunk in response:
-                if chunk.choices and chunk['choices'][0]['delta'].get('content'):
-                    response_text += chunk['choices'][0]['delta']['content']
+                if chunk.choices and chunk.choices[0].delta.content:
+                    response_text += chunk.choices[0].delta.content
             
             self.add_to_history("assistant", response_text)
             return response_text
@@ -223,8 +223,8 @@ Focus on providing actionable feedback and specific fixes for any issues found."
         
         response_text = ""
         for chunk in response:
-            if chunk.choices and chunk['choices'][0]['delta'].get('content'):
-                response_text += chunk['choices'][0]['delta']['content']
+            if chunk.choices and chunk.choices[0].delta.content:
+                response_text += chunk.choices[0].delta.content
 
         self.add_to_history("assistant", response_text)
         
@@ -290,8 +290,8 @@ Return ONLY the test code, with no explanations or other text."""
         
         test_code_raw = ""
         for chunk in response:
-            if chunk.choices and chunk['choices'][0]['delta'].get('content'):
-                test_code_raw += chunk['choices'][0]['delta']['content']
+            if chunk.choices and chunk.choices[0].delta.content:
+                test_code_raw += chunk.choices[0].delta.content
 
         # Extract just the code if it's in a code block
         test_code_match = re.search(r'```python\s*([\s\S]*?)\s*```', test_code_raw)
