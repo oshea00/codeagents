@@ -5,18 +5,17 @@ import re
 from typing import List, Dict, Any, Optional
 import argparse  # Add argparse import
 from docker_test import PythonPackageAnalyzer
-from llmtools import MultiLLMClient
+from litellm import completion
 
-# Initialize client
-client = MultiLLMClient(provider="openai")
 
 class Agent:
     """Base agent class with core functionality."""
     
-    def __init__(self, name: str, system_prompt: str):
+    def __init__(self, name: str, system_prompt: str, model: str = "gpt-4o"):
         self.name = name
         self.system_prompt = system_prompt
         self.history: List[Dict[str, str]] = []
+        self.model = model
     
     def add_to_history(self, role: str, content: str):
         """Add a message to the conversation history."""
@@ -34,11 +33,16 @@ class Agent:
         """Process input with the agent and return the response."""
         self.add_to_history("user", input_text)
         
-        response = client.chat_completion(
-            messages=self.get_messages()
+        response = completion(model=self.model,
+            messages=self.get_messages(),
+            stream=True
         )
-        
-        response_text = response['content']
+
+        response_text = ""
+        for chunk in response:
+            if chunk.choices and chunk['choices'][0]['delta'].get('content'):
+                response_text += chunk['choices'][0]['delta']['content']
+
         self.add_to_history("assistant", response_text)
         
         return response_text
@@ -47,7 +51,7 @@ class Agent:
 class ArchitectAgent(Agent):
     """Agent specialized in designing software architecture based on problem descriptions."""
     
-    def __init__(self):
+    def __init__(self,model: str = "gpt-4o"):
         system_prompt = """You are an expert software architect. Your job is to:
 1. Analyze the problem description that is provided to you
 2. Break down the requirements into clear, actionable items
@@ -66,13 +70,13 @@ Format your response in a structured way with clear sections for:
 
 Be specific, practical, and focus on creating a plan that developers can follow to implement the solution."""
         
-        super().__init__("Architect", system_prompt)
+        super().__init__("Architect", system_prompt,model=model)
 
 
 class SoftwareEngineerAgent(Agent):
     """Agent specialized in implementing Python code based on architecture plans."""
     
-    def __init__(self):
+    def __init__(self,model: str = "gpt-4o"):
         system_prompt = """You are an expert Python software engineer. Your job is to implement Python code based on the architecture and development plan provided to you.
 
 For each part of the system you're asked to implement:
@@ -107,12 +111,12 @@ Do not use markdown formatting or triple backticks to enclose the source code.
 
 """
         
-        super().__init__("Software Engineer", system_prompt)
+        super().__init__("Software Engineer", system_prompt,model=model)
 
 class TestEngineerAgent(Agent):
     """Agent specialized in testing and evaluating Python code implementations."""
     
-    def __init__(self):
+    def __init__(self,model: str = "gpt-4o"):
         system_prompt = """You are an expert Python test engineer. Your job is to analyze, compile, and test Python code implementations.
 
 Your responsibilities include:
@@ -151,7 +155,7 @@ Your response MUST be a JSON object with the following structure:
     }
 }"""
         
-        super().__init__("Test Engineer", system_prompt)
+        super().__init__("Test Engineer", system_prompt,model=model)
         
     def process(self, input_text: str) -> str:
         """Process input with the agent, run code in Docker sandbox, and return the response."""
@@ -163,11 +167,17 @@ Your response MUST be a JSON object with the following structure:
         
         if not code_match:
             # No code found, use regular processing without code execution
-            response = client.chat_completion(
-                messages=self.get_messages()
+            response = completion(
+                model=self.model,
+                messages=self.get_messages(),
+                stream=True
             )
             
-            response_text = response['content']
+            response_text = ""
+            for chunk in response:
+                if chunk.choices and chunk['choices'][0]['delta'].get('content'):
+                    response_text += chunk['choices'][0]['delta']['content']
+            
             self.add_to_history("assistant", response_text)
             return response_text
         
@@ -205,11 +215,17 @@ Focus on providing actionable feedback and specific fixes for any issues found."
         self.history[-1]["content"] = enhanced_input
         
         # Let the GPT model analyze the results and generate the report
-        response = client.chat_completion(
-            messages=self.get_messages()
+        response = completion(
+            model=self.model,
+            messages=self.get_messages(),
+            stream=True
         )
         
-        response_text = response['content']
+        response_text = ""
+        for chunk in response:
+            if chunk.choices and chunk['choices'][0]['delta'].get('content'):
+                response_text += chunk['choices'][0]['delta']['content']
+
         self.add_to_history("assistant", response_text)
         
         # Try to ensure the response is valid JSON
@@ -265,13 +281,18 @@ Create a complete test suite that:
 Return ONLY the test code, with no explanations or other text."""
 
         # Call the API to generate test code
-        response = client.chat_completion(
+        response = completion(
+            model=self.model,
             messages=[{"role": "system", "content": "You are an expert in writing Python unit tests."},
-                      {"role": "user", "content": test_generation_prompt}]
+                      {"role": "user", "content": test_generation_prompt}],
+            stream=True
         )
         
-        test_code_raw = response['content']
-        
+        test_code_raw = ""
+        for chunk in response:
+            if chunk.choices and chunk['choices'][0]['delta'].get('content'):
+                test_code_raw += chunk['choices'][0]['delta']['content']
+
         # Extract just the code if it's in a code block
         test_code_match = re.search(r'```python\s*([\s\S]*?)\s*```', test_code_raw)
         if test_code_match:
@@ -409,10 +430,10 @@ def pytest_runtest_makereport(item, call):
 class AgenticFlow:
     """Manages the flow of information between agents."""
     
-    def __init__(self, max_iterations=3):
-        self.architect = ArchitectAgent()
-        self.software_engineer = SoftwareEngineerAgent()
-        self.test_engineer = TestEngineerAgent()
+    def __init__(self, max_iterations=3, model="gpt-4o"):
+        self.architect = ArchitectAgent(model=model)
+        self.software_engineer = SoftwareEngineerAgent(model=model)
+        self.test_engineer = TestEngineerAgent(model=model)
         self.max_iterations = max_iterations
         self.results = {
             "architecture_plan": None,
@@ -579,14 +600,15 @@ if __name__ == "__main__":
     # Setup correct client based on user input
     chosen_provider = input("🌐 Choose LLM provider (openai, anthropic): ").strip().lower()
     if chosen_provider == "anthropic":
-        client = MultiLLMClient(provider="anthropic")
+        model = "anthropic/claude-3-7-sonnet-20250219"
     elif chosen_provider == "openai":
-        client = MultiLLMClient(provider="openai")
+        model = "openai/gpt-4o"
     else:
         print("Invalid provider selected. Defaulting to OpenAI.")
-        client = MultiLLMClient(provider="openai")
+        chosen_provider = "openai"
+        model = "openai/gpt-4o"
 
-    print(f"Using LLM provider: {client.provider_name}")
+    print(f"Using LLM provider: {chosen_provider}")
     # Load problem description
     if args.description_file:
         try:
@@ -610,7 +632,7 @@ if __name__ == "__main__":
             print(problem_description)
     
     start_time = time.time()
-    flow = AgenticFlow(max_iterations=args.max_iterations)
+    flow = AgenticFlow(max_iterations=args.max_iterations,model=model)
     results = flow.run(problem_description)
     end_time = time.time()
     
