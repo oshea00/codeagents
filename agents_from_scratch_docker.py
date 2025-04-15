@@ -553,18 +553,11 @@ Please provide a complete revised implementation that addresses all the issues m
         return text
             
     def save_results(self, filename: str = "agentic_flow_results.json"):
-        """Save the results to a JSON file."""
-        # Create a serializable version of the results
-        serializable_results = self.results.copy()
-        
-        with open(filename, "w") as f:
-            json.dump(serializable_results, f, indent=2)
-        print(f"Results saved to {filename}")
-    
-    def save_results(self, filename: str = "agentic_flow_results.json"):
-        """Save the results to a JSON file."""
-        with open(filename, "w") as f:
-            json.dump(self.results, f, indent=2)
+        """Save the results to a JSON file in a pretty format."""
+        src_dir = "src"
+        filename = os.path.join(src_dir, filename)
+        with open(filename, 'w') as f:
+            json.dump(self.results, f, indent=4, sort_keys=False)
         print(f"Results saved to {filename}")
 
 
