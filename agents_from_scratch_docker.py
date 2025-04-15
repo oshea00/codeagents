@@ -7,15 +7,15 @@ import argparse  # Add argparse import
 from docker_test import PythonPackageAnalyzer
 from litellm import completion
 
-
 class Agent:
     """Base agent class with core functionality."""
     
-    def __init__(self, name: str, system_prompt: str, model: str = "gpt-4o"):
+    def __init__(self, name: str, system_prompt: str, model: str = "gpt-4o", temperature: float = 0):
         self.name = name
         self.system_prompt = system_prompt
         self.history: List[Dict[str, str]] = []
         self.model = model
+        self.temperature = temperature
     
     def add_to_history(self, role: str, content: str):
         """Add a message to the conversation history."""
@@ -28,13 +28,14 @@ class Agent:
     def get_messages(self) -> List[Dict[str, str]]:
         """Get the messages for the API call, including system prompt."""
         return [{"role": "system", "content": self.system_prompt}] + self.history
-    
-    def process(self, input_text: str) -> str:
-        """Process input with the agent and return the response."""
-        self.add_to_history("user", input_text)
-        
+
+    def query_llm(self, messages: List[Dict[str,str]] = None) -> str:
+        """Query the LLM with the current messages, allowing override
+        of messages given in the function call, and return the response.""" 
+        use_messages = messages if messages else self.get_messages()    
         response = completion(model=self.model,
-            messages=self.get_messages(),
+            messages=use_messages,
+            temperature=self.temperature,
             stream=True
         )
 
@@ -43,15 +44,20 @@ class Agent:
             if chunk.choices and chunk.choices[0].delta.content:
                 response_text += chunk.choices[0].delta.content
 
+        return response_text
+    
+    def process(self, input_text: str) -> str:
+        """Query the LLM with a prompt and return the response."""
+        self.add_to_history("user", input_text)
+        response_text = self.query_llm()
         self.add_to_history("assistant", response_text)
-        
         return response_text
 
 
 class ArchitectAgent(Agent):
     """Agent specialized in designing software architecture based on problem descriptions."""
     
-    def __init__(self,model: str = "gpt-4o"):
+    def __init__(self,model: str = "gpt-4o",temperature: float = 0):
         system_prompt = """You are an expert software architect. Your job is to:
 1. Analyze the problem description that is provided to you
 2. Break down the requirements into clear, actionable items
@@ -70,13 +76,13 @@ Format your response in a structured way with clear sections for:
 
 Be specific, practical, and focus on creating a plan that developers can follow to implement the solution."""
         
-        super().__init__("Architect", system_prompt,model=model)
+        super().__init__("Architect", system_prompt,model=model,temperature=temperature)
 
 
 class SoftwareEngineerAgent(Agent):
     """Agent specialized in implementing Python code based on architecture plans."""
     
-    def __init__(self,model: str = "gpt-4o"):
+    def __init__(self,model: str = "gpt-4o", temperature: float = 0):
         system_prompt = """You are an expert Python software engineer. Your job is to implement Python code based on the architecture and development plan provided to you.
 
 For each part of the system you're asked to implement:
@@ -111,12 +117,12 @@ Do not use markdown formatting or triple backticks to enclose the source code.
 
 """
         
-        super().__init__("Software Engineer", system_prompt,model=model)
+        super().__init__("Software Engineer", system_prompt,model=model,temperature=temperature)
 
 class TestEngineerAgent(Agent):
     """Agent specialized in testing and evaluating Python code implementations."""
     
-    def __init__(self,model: str = "gpt-4o"):
+    def __init__(self,model: str = "gpt-4o", temperature: float = 0):
         system_prompt = """You are an expert Python test engineer. Your job is to analyze, compile, and test Python code implementations.
 
 Your responsibilities include:
@@ -155,29 +161,17 @@ Your response MUST be a JSON object with the following structure:
     }
 }"""
         
-        super().__init__("Test Engineer", system_prompt,model=model)
+        super().__init__("Test Engineer", system_prompt,model=model,temperature=temperature)
         
-    def process(self, input_text: str) -> str:
+    def process(self, input_text: str) -> str:        
         """Process input with the agent, run code in Docker sandbox, and return the response."""
         self.add_to_history("user", input_text)
-        
         # Extract code from input
         import re
         code_match = re.search(r'```python\s*([\s\S]*?)\s*```', input_text)
         
         if not code_match:
-            # No code found, use regular processing without code execution
-            response = completion(
-                model=self.model,
-                messages=self.get_messages(),
-                stream=True
-            )
-            
-            response_text = ""
-            for chunk in response:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    response_text += chunk.choices[0].delta.content
-            
+            response_text = self.query_llm()            
             self.add_to_history("assistant", response_text)
             return response_text
         
@@ -215,17 +209,7 @@ Focus on providing actionable feedback and specific fixes for any issues found."
         self.history[-1]["content"] = enhanced_input
         
         # Let the GPT model analyze the results and generate the report
-        response = completion(
-            model=self.model,
-            messages=self.get_messages(),
-            stream=True
-        )
-        
-        response_text = ""
-        for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                response_text += chunk.choices[0].delta.content
-
+        response_text = self.query_llm()
         self.add_to_history("assistant", response_text)
         
         # Try to ensure the response is valid JSON
@@ -281,17 +265,12 @@ Create a complete test suite that:
 Return ONLY the test code, with no explanations or other text."""
 
         # Call the API to generate test code
-        response = completion(
-            model=self.model,
-            messages=[{"role": "system", "content": "You are an expert in writing Python unit tests."},
-                      {"role": "user", "content": test_generation_prompt}],
-            stream=True
-        )
-        
-        test_code_raw = ""
-        for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                test_code_raw += chunk.choices[0].delta.content
+        prompt_messages = [
+            {"role": "system", "content": "You are an expert in writing Python unit tests."},
+            {"role": "user", "content": test_generation_prompt}
+        ] 
+                
+        test_code_raw = self.query_llm(prompt_messages)
 
         # Extract just the code if it's in a code block
         test_code_match = re.search(r'```python\s*([\s\S]*?)\s*```', test_code_raw)
@@ -326,13 +305,16 @@ Return ONLY the test code, with no explanations or other text."""
                 f.write("""
 import pytest
 
+def pytest_configure(config):
+    config.option.asyncio_mode = "auto"
+    config._inicache["asyncio_default_fixture_loop_scope"] = "function"
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
     if report.when == "call":
         print(f"TEST: {item.name} - {'PASSED' if report.passed else 'FAILED'}")
-    return report
 """)
             # copy the contents of the temp directory to the current directory for debugging purposes
             import shutil
@@ -350,7 +332,6 @@ def pytest_runtest_makereport(item, call):
                     "stderr": "Docker is not available on this system",
                     "return_code": -1
                 }
-            
 
             try:
                 analyzer = PythonPackageAnalyzer(src_dir="src")
@@ -430,11 +411,12 @@ def pytest_runtest_makereport(item, call):
 class AgenticFlow:
     """Manages the flow of information between agents."""
     
-    def __init__(self, max_iterations=3, model="gpt-4o"):
-        self.architect = ArchitectAgent(model=model)
-        self.software_engineer = SoftwareEngineerAgent(model=model)
-        self.test_engineer = TestEngineerAgent(model=model)
+    def __init__(self, max_iterations=3, model="gpt-4o", temperature=0):
+        self.architect = ArchitectAgent(model=model, temperature=temperature)
+        self.software_engineer = SoftwareEngineerAgent(model=model, temperature=temperature)
+        self.test_engineer = TestEngineerAgent(model=model, temperature=temperature)
         self.max_iterations = max_iterations
+        self.temperature = temperature
         self.results = {
             "architecture_plan": None,
             "implementation_history": [],
@@ -632,7 +614,7 @@ if __name__ == "__main__":
             print(problem_description)
     
     start_time = time.time()
-    flow = AgenticFlow(max_iterations=args.max_iterations,model=model)
+    flow = AgenticFlow(max_iterations=args.max_iterations,model=model,temperature=0)
     results = flow.run(problem_description)
     end_time = time.time()
     
@@ -644,7 +626,7 @@ if __name__ == "__main__":
     
     print("\n=== 🧪 Testing Summary ===")
     if results["success"]:
-        print(f"✅ Implementation successful after {results['iterations_required']} iteration(s)")
+        print(f"✅ Implementation successful after {results['iterations_required']+1} iteration(s)")
     else:
         print(f"❌ Implementation still has issues after {results['iterations_required']} iteration(s)")
     
