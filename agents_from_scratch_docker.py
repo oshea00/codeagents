@@ -10,7 +10,7 @@ from litellm import completion
 class Agent:
     """Base agent class with core functionality."""
     
-    def __init__(self, name: str, system_prompt: str, model: str = "gpt-4o", temperature: float = 0):
+    def __init__(self, name: str, system_prompt: str, model: str, temperature: float = 0):
         self.name = name
         self.system_prompt = system_prompt
         self.history: List[Dict[str, str]] = []
@@ -57,7 +57,7 @@ class Agent:
 class ArchitectAgent(Agent):
     """Agent specialized in designing software architecture based on problem descriptions."""
     
-    def __init__(self,model: str = "gpt-4o",temperature: float = 0):
+    def __init__(self,model: str,temperature: float = 0):
         system_prompt = """You are an expert software architect. Your job is to:
 1. Analyze the problem description that is provided to you
 2. Break down the requirements into clear, actionable items
@@ -82,7 +82,7 @@ Be specific, practical, and focus on creating a plan that developers can follow 
 class SoftwareEngineerAgent(Agent):
     """Agent specialized in implementing Python code based on architecture plans."""
     
-    def __init__(self,model: str = "gpt-4o", temperature: float = 0):
+    def __init__(self,model: str, temperature: float = 0):
         system_prompt = """You are an expert Python software engineer. Your job is to implement Python code based on the architecture and development plan provided to you.
 
 For each part of the system you're asked to implement:
@@ -122,7 +122,7 @@ Do not use markdown formatting or triple backticks to enclose the source code.
 class TestEngineerAgent(Agent):
     """Agent specialized in testing and evaluating Python code implementations."""
     
-    def __init__(self,model: str = "gpt-4o", temperature: float = 0):
+    def __init__(self,model: str, temperature: float = 0):
         system_prompt = """You are an expert Python test engineer. Your job is to analyze, compile, and test Python code implementations.
 
 Your responsibilities include:
@@ -411,7 +411,7 @@ def pytest_runtest_makereport(item, call):
 class AgenticFlow:
     """Manages the flow of information between agents."""
     
-    def __init__(self, max_iterations=3, model="gpt-4o", temperature=0):
+    def __init__(self, model: str, max_iterations=3, temperature=0):
         self.architect = ArchitectAgent(model=model, temperature=temperature)
         self.software_engineer = SoftwareEngineerAgent(model=model, temperature=temperature)
         self.test_engineer = TestEngineerAgent(model=model, temperature=temperature)
@@ -614,7 +614,7 @@ if __name__ == "__main__":
             print(problem_description)
     
     start_time = time.time()
-    flow = AgenticFlow(max_iterations=args.max_iterations,model=model,temperature=0)
+    flow = AgenticFlow(model=model,max_iterations=args.max_iterations,temperature=0)
     results = flow.run(problem_description)
     end_time = time.time()
     
