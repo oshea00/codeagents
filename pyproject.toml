@@ -10,9 +10,16 @@ dependencies = [
     "cachetools>=5.5.2",
     "fastapi>=0.115.12",
     "geopy>=2.4.1",
+    "h11==0.16.0",
     "openai>=1.69.0",
     "python-dotenv>=1.1.0",
     "sympy>=1.13.3",
     "uszipcode>=1.0.1",
     "uvicorn>=0.34.0",
+]
+
+[dependency-groups]
+dev = [
+    "graphviz>=0.20.3",
+    "pipdeptree>=2.26.1",
 ]
