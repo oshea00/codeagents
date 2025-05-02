@@ -286,13 +286,13 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install dependencies and pytest
-RUN pip install --no-cache-dir -r requirements.txt pytest
+RUN pip install --no-cache-dir -r requirements.txt pytest pytest-cov
 
 # Copy all Python files from source directory
 COPY {self.src_dir} /app/
 
 # Default command to run tests
-CMD ["python", "-m", "pytest"]
+CMD ["python", "-m", "pytest","--cov=main", "--cov-report=term-missing"]
 """
 
         # Write the Dockerfile
