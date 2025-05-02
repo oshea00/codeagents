@@ -157,6 +157,7 @@ Your response MUST be a JSON object with the following structure:
                 "fix_suggestion": string  // Specific code or approach to fix the issue
             }
         ],
+        "test_coverage": string,  // Percentage of code covered by tests
         "overall_assessment": string  // General assessment of the code quality and functionality
     }
 }"""
