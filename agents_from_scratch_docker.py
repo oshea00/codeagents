@@ -531,7 +531,7 @@ Please provide a complete revised implementation that addresses all the issues m
         self.results["final_implementation"] = implementation
         if len(self.results["test_reports"]) > 0:
             self.results["final_test_report"] = self.results["test_reports"][-1]
-        self.results["iterations_required"] = iteration - 1
+        self.results["iterations_required"] = iteration
         self.results["success"] = success
         
         return self.results
@@ -577,7 +577,7 @@ if __name__ == "__main__":
     if chosen_provider == "anthropic":
         model = "anthropic/claude-3-7-sonnet-20250219"
     elif chosen_provider == "openai":
-        model = "openai/gpt-4o"
+        model = "openai/gpt-4.1"
     else:
         print("Invalid provider selected. Defaulting to OpenAI.")
         chosen_provider = "openai"
