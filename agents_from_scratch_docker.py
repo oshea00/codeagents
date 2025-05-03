@@ -580,7 +580,7 @@ if __name__ == "__main__":
     elif chosen_provider == "openai":
         model = "openai/gpt-4.1"
     else:
-        print("Invalid provider selected. Defaulting to OpenAI.")
+        print("Invalid provider selected. Defaulting to OpenAI gpt-4o.")
         chosen_provider = "openai"
         model = "openai/gpt-4o"
 
