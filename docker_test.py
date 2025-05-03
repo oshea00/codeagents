@@ -157,6 +157,7 @@ class PythonPackageAnalyzer:
             "ast",
             "asyncio",
             "base64",
+            "builtins",
             "collections",
             "concurrent",
             "contextlib",
