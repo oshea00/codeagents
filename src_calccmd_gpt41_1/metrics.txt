@@ -1,0 +1,7 @@
+Analyzing metrics for directory: ./src_calccmd_gpt41_1
+Average complexity: A (2.58974358974359)
+Maintainability:  ./src_calccmd_gpt41_1/main.py - A
+    LLOC: 254
+    difficulty: 8.60377358490566
+    time: 331.0408470809352
+    bugs: 0.23085743283275742

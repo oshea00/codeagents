@@ -1,0 +1,489 @@
+{
+    "architecture_plan": "**Problem Analysis**\n\nWe are to build a command-line calculator that runs in a REPL (Read-Eval-Print Loop), supporting:\n- Basic arithmetic (+, -, *, /) with correct operator precedence and left-to-right associativity for equal precedence.\n- Parentheses for grouping.\n- Negative number literals, including multiple consecutive minus signs (e.g., `--3` is `3`).\n- Command-line history navigation (up/down arrows).\n- A `help` command that explains usage.\n\nThe calculator must parse and evaluate user input, handle errors gracefully, and provide a user-friendly CLI experience.\n\n---\n\n**Requirements**\n\n1. **REPL Loop**: Continuously prompt for input, evaluate, and print results until exit.\n2. **Arithmetic Operations**: Support `+`, `-`, `*`, `/` with correct precedence and associativity.\n3. **Parentheses**: Allow grouping of expressions.\n4. **Negative Literals**: Correctly parse and evaluate negative numbers and multiple unary minuses.\n5. **Command Line History**: Support up/down arrow navigation for previous commands.\n6. **Help Command**: Print usage instructions when the user enters `help`.\n7. **Error Handling**: Gracefully handle invalid input, division by zero, etc.\n8. **Exit Command**: Allow the user to exit the REPL (e.g., `exit` or `quit`).\n\n---\n\n**Architecture Design**\n\n- **CLI Layer**: Handles user input/output, command history, and REPL loop.\n- **Parser**: Converts input strings into an Abstract Syntax Tree (AST), handling operator precedence, associativity, parentheses, and unary minus.\n- **Evaluator**: Walks the AST to compute the result.\n- **Help Handler**: Prints usage instructions.\n- **Error Handler**: Catches and reports errors to the user.\n\n**Component Diagram:**\n\n```\n+-------------------+\n|    CLI Handler    |<---+\n+-------------------+    |\n         |               |\n         v               |\n+-------------------+    |\n|      Parser       |    |\n+-------------------+    |\n         |               |\n         v               |\n+-------------------+    |\n|    Evaluator      |    |\n+-------------------+    |\n         |               |\n         v               |\n+-------------------+    |\n|   Error Handler   |----+\n+-------------------+\n```\n\n---\n\n**Development Plan**\n\n1. **Project Setup**\n   - Initialize project structure.\n   - Set up dependencies (e.g., for CLI history).\n\n2. **CLI Handler**\n   - Implement REPL loop.\n   - Integrate command-line history (up/down arrows).\n   - Recognize `help`, `exit`, and `quit` commands.\n\n3. **Parser**\n   - Tokenize input (numbers, operators, parentheses).\n   - Implement recursive descent parser or shunting yard algorithm to build AST.\n   - Handle unary minus with correct precedence (multiple consecutive minuses).\n\n4. **Evaluator**\n   - Walk the AST to compute results.\n   - Handle division by zero and other runtime errors.\n\n5. **Help Handler**\n   - Implement help text and display logic.\n\n6. **Error Handling**\n   - Catch and display parsing/evaluation errors.\n\n7. **Testing**\n   - Unit tests for parser and evaluator.\n   - Manual testing of REPL and CLI features.\n\n**Estimated Effort:**\n- Project setup: 0.5 day\n- CLI Handler: 1 day\n- Parser: 2 days\n- Evaluator: 1 day\n- Help/Error Handling: 0.5 day\n- Testing: 1 day\n- **Total: ~6 days**\n\n---\n\n**Technology Stack**\n\n- **Language**: Python 3 (for rapid prototyping, strong CLI and parsing libraries)\n- **CLI History**: `readline` (built-in on Unix, `pyreadline` for Windows)\n- **Testing**: `unittest` or `pytest`\n- **Packaging**: Standard Python packaging\n\n*Alternative*: Node.js (with `readline`), or Go (with `liner`), but Python is recommended for its parsing and CLI capabilities.\n\n---\n\n**Risks and Mitigations**\n\n1. **Complexity of Parsing Expressions**\n   - *Risk*: Handling operator precedence, associativity, and multiple unary minuses can be error-prone.\n   - *Mitigation*: Use a well-known parsing algorithm (e.g., shunting yard or recursive descent). Write comprehensive unit tests for edge cases.\n\n2. **Cross-platform CLI History**\n   - *Risk*: `readline` is not available by default on Windows.\n   - *Mitigation*: Use `pyreadline` on Windows, document requirements.\n\n3. **User Input Errors**\n   - *Risk*: Users may enter malformed expressions.\n   - *Mitigation*: Implement robust error handling and clear error messages.\n\n4. **Floating Point Precision**\n   - *Risk*: Division and multiplication may result in floating point inaccuracies.\n   - *Mitigation*: Use Python\u2019s `decimal` module if higher precision is needed.\n\n5. **Extensibility**\n   - *Risk*: Future requirements (e.g., more operators, functions) may require parser changes.\n   - *Mitigation*: Design parser and evaluator to be modular and extensible.\n\n---\n\n**Summary Table**\n\n| Component      | Task                                      | Est. Effort |\n|----------------|-------------------------------------------|-------------|\n| Project Setup  | Init project, dependencies                | 0.5 day     |\n| CLI Handler    | REPL, history, commands                   | 1 day       |\n| Parser         | Tokenizer, AST, precedence, unary minus   | 2 days      |\n| Evaluator      | AST evaluation, error handling            | 1 day       |\n| Help/Error     | Help text, error messages                 | 0.5 day     |\n| Testing        | Unit/manual tests                         | 1 day       |\n\n---\n\n**Next Steps**\n\n1. Set up the project and dependencies.\n2. Implement the CLI handler and REPL loop.\n3. Develop the parser with correct precedence and unary minus handling.\n4. Build the evaluator.\n5. Add help and error handling.\n6. Test thoroughly.\n\n---\n\nThis plan provides a clear, actionable path for developers to implement the CLI calculator as specified.",
+    "implementation_history": [
+        "# main.py\n\n\"\"\"\nOverview of Implementation Approach\n-----------------------------------\nThis file implements a command-line calculator as described in the architecture plan. The system is modular, with\ndistinct classes for the CLI handler (REPL loop and command history), parser (tokenization and AST construction),\nevaluator (AST evaluation), help handler, and error handling. The parser uses a recursive descent approach to\nhandle operator precedence, associativity, parentheses, and multiple unary minuses. The CLI uses the `readline`\nmodule for history navigation (with a fallback warning on Windows if unavailable). The system is robust against\ninvalid input and provides clear error messages.\n\nModules, Classes, and Functions Implemented\n-------------------------------------------\n- Imports: sys, readline, re, typing\n- Error classes: CalculatorError, ParseError, EvalError\n- Tokenizer: Token, TokenType, Tokenizer\n- AST Nodes: ASTNode, NumberNode, UnaryOpNode, BinOpNode\n- Parser: Parser\n- Evaluator: Evaluator\n- HelpHandler: HelpHandler\n- CLIHandler: CLIHandler (main REPL loop)\n- Main entry point: main()\n\nAll code is documented and follows PEP 8 guidelines.\n\"\"\"\n\nimport sys\nimport re\nfrom typing import List, Optional, Union, Any\n\n# Try to import readline for command history.\ntry:\n    import readline\nexcept ImportError:\n    readline = None  # On Windows, readline may not be available.\n\n\n# ---------------------------\n# Error Classes\n# ---------------------------\n\nclass CalculatorError(Exception):\n    \"\"\"Base class for calculator errors.\"\"\"\n    pass\n\nclass ParseError(CalculatorError):\n    \"\"\"Raised when parsing fails.\"\"\"\n    pass\n\nclass EvalError(CalculatorError):\n    \"\"\"Raised when evaluation fails.\"\"\"\n    pass\n\n\n# ---------------------------\n# Tokenizer\n# ---------------------------\n\nclass TokenType:\n    \"\"\"Enumeration of token types.\"\"\"\n    NUMBER = 'NUMBER'\n    PLUS = 'PLUS'\n    MINUS = 'MINUS'\n    MUL = 'MUL'\n    DIV = 'DIV'\n    LPAREN = 'LPAREN'\n    RPAREN = 'RPAREN'\n    EOF = 'EOF'\n\nclass Token:\n    \"\"\"\n    Represents a token in the input stream.\n    \"\"\"\n    def __init__(self, type_: str, value: Optional[Any] = None, pos: int = 0):\n        self.type = type_\n        self.value = value\n        self.pos = pos\n\n    def __repr__(self):\n        return f\"Token({self.type}, {self.value}, pos={self.pos})\"\n\nclass Tokenizer:\n    \"\"\"\n    Converts an input string into a list of tokens.\n    Handles numbers (integers and floats), operators, and parentheses.\n    \"\"\"\n    token_specification = [\n        ('NUMBER',  r'\\d+(\\.\\d*)?'),   # Integer or decimal number\n        ('PLUS',    r'\\+'),\n        ('MINUS',   r'-'),\n        ('MUL',     r'\\*'),\n        ('DIV',     r'/'),\n        ('LPAREN',  r'\\('),\n        ('RPAREN',  r'\\)'),\n        ('SKIP',    r'[ \\t]+'),        # Skip spaces and tabs\n        ('MISMATCH',r'.'),             # Any other character\n    ]\n    tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)\n    get_token = re.compile(tok_regex).match\n\n    def __init__(self, text: str):\n        self.text = text\n        self.pos = 0\n        self.tokens: List[Token] = []\n        self.current = 0\n        self._tokenize()\n\n    def _tokenize(self):\n        \"\"\"\n        Tokenizes the input string into a list of Token objects.\n        \"\"\"\n        mo = self.get_token(self.text)\n        pos = 0\n        while mo is not None:\n            kind = mo.lastgroup\n            value = mo.group()\n            if kind == 'NUMBER':\n                if '.' in value:\n                    value = float(value)\n                else:\n                    value = int(value)\n                self.tokens.append(Token(TokenType.NUMBER, value, pos))\n            elif kind == 'PLUS':\n                self.tokens.append(Token(TokenType.PLUS, value, pos))\n            elif kind == 'MINUS':\n                self.tokens.append(Token(TokenType.MINUS, value, pos))\n            elif kind == 'MUL':\n                self.tokens.append(Token(TokenType.MUL, value, pos))\n            elif kind == 'DIV':\n                self.tokens.append(Token(TokenType.DIV, value, pos))\n            elif kind == 'LPAREN':\n                self.tokens.append(Token(TokenType.LPAREN, value, pos))\n            elif kind == 'RPAREN':\n                self.tokens.append(Token(TokenType.RPAREN, value, pos))\n            elif kind == 'SKIP':\n                pass  # Ignore whitespace\n            elif kind == 'MISMATCH':\n                raise ParseError(f\"Unexpected character '{value}' at position {pos}\")\n            pos = mo.end()\n            mo = self.get_token(self.text, pos)\n        self.tokens.append(Token(TokenType.EOF, None, pos))\n\n    def peek(self) -> Token:\n        \"\"\"\n        Returns the current token without consuming it.\n        \"\"\"\n        return self.tokens[self.current]\n\n    def next(self) -> Token:\n        \"\"\"\n        Consumes and returns the current token.\n        \"\"\"\n        token = self.tokens[self.current]\n        self.current += 1\n        return token\n\n    def expect(self, type_: str) -> Token:\n        \"\"\"\n        Consumes and returns the current token if it matches the expected type.\n        Raises ParseError otherwise.\n        \"\"\"\n        token = self.peek()\n        if token.type != type_:\n            raise ParseError(f\"Expected token {type_}, got {token.type} at position {token.pos}\")\n        return self.next()\n\n\n# ---------------------------\n# AST Nodes\n# ---------------------------\n\nclass ASTNode:\n    \"\"\"\n    Base class for AST nodes.\n    \"\"\"\n    pass\n\nclass NumberNode(ASTNode):\n    \"\"\"\n    Represents a numeric literal in the AST.\n    \"\"\"\n    def __init__(self, value: Union[int, float]):\n        self.value = value\n\n    def __repr__(self):\n        return f\"NumberNode({self.value})\"\n\nclass UnaryOpNode(ASTNode):\n    \"\"\"\n    Represents a unary operation (e.g., -3, --3) in the AST.\n    \"\"\"\n    def __init__(self, op: str, operand: ASTNode):\n        self.op = op\n        self.operand = operand\n\n    def __repr__(self):\n        return f\"UnaryOpNode({self.op}, {self.operand})\"\n\nclass BinOpNode(ASTNode):\n    \"\"\"\n    Represents a binary operation (e.g., 1 + 2) in the AST.\n    \"\"\"\n    def __init__(self, left: ASTNode, op: str, right: ASTNode):\n        self.left = left\n        self.op = op\n        self.right = right\n\n    def __repr__(self):\n        return f\"BinOpNode({self.left}, {self.op}, {self.right})\"\n\n\n# ---------------------------\n# Parser\n# ---------------------------\n\nclass Parser:\n    \"\"\"\n    Recursive descent parser for arithmetic expressions.\n    Handles operator precedence, associativity, parentheses, and multiple unary minuses.\n    Grammar:\n        expr    : term ((PLUS|MINUS) term)*\n        term    : factor ((MUL|DIV) factor)*\n        factor  : (MINUS)* primary\n        primary : NUMBER | LPAREN expr RPAREN\n    \"\"\"\n    def __init__(self, tokenizer: Tokenizer):\n        self.tokenizer = tokenizer\n\n    def parse(self) -> ASTNode:\n        \"\"\"\n        Parses the input and returns the root AST node.\n        \"\"\"\n        node = self.expr()\n        if self.tokenizer.peek().type != TokenType.EOF:\n            token = self.tokenizer.peek()\n            raise ParseError(f\"Unexpected token '{token.value}' at position {token.pos}\")\n        return node\n\n    def expr(self) -> ASTNode:\n        \"\"\"\n        expr : term ((PLUS|MINUS) term)*\n        \"\"\"\n        node = self.term()\n        while self.tokenizer.peek().type in (TokenType.PLUS, TokenType.MINUS):\n            op_token = self.tokenizer.next()\n            right = self.term()\n            node = BinOpNode(node, op_token.type, right)\n        return node\n\n    def term(self) -> ASTNode:\n        \"\"\"\n        term : factor ((MUL|DIV) factor)*\n        \"\"\"\n        node = self.factor()\n        while self.tokenizer.peek().type in (TokenType.MUL, TokenType.DIV):\n            op_token = self.tokenizer.next()\n            right = self.factor()\n            node = BinOpNode(node, op_token.type, right)\n        return node\n\n    def factor(self) -> ASTNode:\n        \"\"\"\n        factor : (MINUS)* primary\n        Handles multiple consecutive unary minuses.\n        \"\"\"\n        minus_count = 0\n        while self.tokenizer.peek().type == TokenType.MINUS:\n            self.tokenizer.next()\n            minus_count += 1\n        node = self.primary()\n        if minus_count % 2 == 1:\n            node = UnaryOpNode(TokenType.MINUS, node)\n        return node\n\n    def primary(self) -> ASTNode:\n        \"\"\"\n        primary : NUMBER | LPAREN expr RPAREN\n        \"\"\"\n        token = self.tokenizer.peek()\n        if token.type == TokenType.NUMBER:\n            self.tokenizer.next()\n            return NumberNode(token.value)\n        elif token.type == TokenType.LPAREN:\n            self.tokenizer.next()\n            node = self.expr()\n            self.tokenizer.expect(TokenType.RPAREN)\n            return node\n        else:\n            raise ParseError(f\"Expected number or '(', got '{token.value}' at position {token.pos}\")\n\n\n# ---------------------------\n# Evaluator\n# ---------------------------\n\nclass Evaluator:\n    \"\"\"\n    Evaluates an AST and computes the result.\n    Handles division by zero and other runtime errors.\n    \"\"\"\n    def eval(self, node: ASTNode) -> Union[int, float]:\n        \"\"\"\n        Recursively evaluates the AST node.\n        \"\"\"\n        if isinstance(node, NumberNode):\n            return node.value\n        elif isinstance(node, UnaryOpNode):\n            operand = self.eval(node.operand)\n            if node.op == TokenType.MINUS:\n                return -operand\n            else:\n                raise EvalError(f\"Unknown unary operator: {node.op}\")\n        elif isinstance(node, BinOpNode):\n            left = self.eval(node.left)\n            right = self.eval(node.right)\n            if node.op == TokenType.PLUS:\n                return left + right\n            elif node.op == TokenType.MINUS:\n                return left - right\n            elif node.op == TokenType.MUL:\n                return left * right\n            elif node.op == TokenType.DIV:\n                if right == 0:\n                    raise EvalError(\"Division by zero\")\n                return left / right\n            else:\n                raise EvalError(f\"Unknown binary operator: {node.op}\")\n        else:\n            raise EvalError(\"Invalid AST node\")\n\n\n# ---------------------------\n# Help Handler\n# ---------------------------\n\nclass HelpHandler:\n    \"\"\"\n    Prints usage instructions for the calculator.\n    \"\"\"\n    HELP_TEXT = \"\"\"\nCommand-Line Calculator Help\n---------------------------\nSupported operations:\n  - Addition:           1 + 2\n  - Subtraction:        3 - 4\n  - Multiplication:     5 * 6\n  - Division:           7 / 8\n  - Parentheses:        (1 + 2) * 3\n  - Negative numbers:   -5, --3 (multiple minuses allowed)\n  - Floating point:     3.14 * 2\n\nSpecial commands:\n  - help      : Show this help message\n  - exit/quit : Exit the calculator\n\nOther features:\n  - Use up/down arrows to navigate command history (if supported)\n  - Errors are reported with clear messages\n\nExamples:\n  > 2 + 2\n  4\n  > --3 * (2 + 1)\n  9\n  > 1 / 0\n  Error: Division by zero\n\"\"\"\n\n    @staticmethod\n    def print_help():\n        print(HelpHandler.HELP_TEXT.strip())\n\n\n# ---------------------------\n# CLI Handler (REPL)\n# ---------------------------\n\nclass CLIHandler:\n    \"\"\"\n    Handles the REPL loop, command history, and user interaction.\n    \"\"\"\n    PROMPT = '> '\n\n    def __init__(self):\n        self.evaluator = Evaluator()\n        self.running = True\n        self._setup_history()\n\n    def _setup_history(self):\n        \"\"\"\n        Sets up command-line history using readline, if available.\n        \"\"\"\n        if readline is not None:\n            # Enable history file if desired (not persistent here).\n            readline.parse_and_bind('tab: complete')\n            readline.parse_and_bind('set editing-mode emacs')\n        else:\n            # Warn user if history is not available.\n            print(\"Warning: Command history (up/down arrows) is not available on this platform.\", file=sys.stderr)\n\n    def run(self):\n        \"\"\"\n        Main REPL loop.\n        \"\"\"\n        while self.running:\n            try:\n                line = input(self.PROMPT)\n            except (EOFError, KeyboardInterrupt):\n                print()  # Newline for clean exit\n                break\n\n            line = line.strip()\n            if not line:\n                continue\n\n            # Handle special commands\n            if line.lower() in ('exit', 'quit'):\n                self.running = False\n                print(\"Goodbye!\")\n                break\n            elif line.lower() == 'help':\n                HelpHandler.print_help()\n                continue\n\n            # Parse and evaluate the expression\n            try:\n                tokenizer = Tokenizer(line)\n                parser = Parser(tokenizer)\n                ast = parser.parse()\n                result = self.evaluator.eval(ast)\n                # Print as int if result is integer-valued\n                if isinstance(result, float) and result.is_integer():\n                    result = int(result)\n                print(result)\n            except CalculatorError as e:\n                print(f\"Error: {e}\")\n            except Exception as e:\n                # Catch-all for unexpected errors\n                print(f\"Unexpected error: {e}\")\n\n# ---------------------------\n# Main Entry Point\n# ---------------------------\n\ndef main():\n    \"\"\"\n    Entry point for the calculator application.\n    \"\"\"\n    print(\"Welcome to the Command-Line Calculator!\")\n    print(\"Type 'help' for instructions, or 'exit' to quit.\")\n    cli = CLIHandler()\n    cli.run()\n\nif __name__ == '__main__':\n    main()\n"
+    ],
+    "test_reports": [
+        {
+            "passed": true,
+            "results": {
+                "compilation_success": true,
+                "test_results": [
+                    {
+                        "test_name": "test_tokenizer_simple_expression",
+                        "passed": true,
+                        "description": "Verifies that the tokenizer correctly tokenizes a simple arithmetic expression."
+                    },
+                    {
+                        "test_name": "test_tokenizer_float_and_int",
+                        "passed": true,
+                        "description": "Checks that the tokenizer handles both integer and floating-point numbers."
+                    },
+                    {
+                        "test_name": "test_tokenizer_parentheses_and_operators",
+                        "passed": true,
+                        "description": "Ensures the tokenizer recognizes parentheses and all supported operators."
+                    },
+                    {
+                        "test_name": "test_tokenizer_skip_whitespace",
+                        "passed": true,
+                        "description": "Confirms that whitespace is ignored by the tokenizer."
+                    },
+                    {
+                        "test_name": "test_tokenizer_unexpected_character",
+                        "passed": true,
+                        "description": "Checks that the tokenizer raises a ParseError on unexpected characters."
+                    },
+                    {
+                        "test_name": "test_parser_number",
+                        "passed": true,
+                        "description": "Verifies that the parser correctly parses a single number."
+                    },
+                    {
+                        "test_name": "test_parser_simple_addition",
+                        "passed": true,
+                        "description": "Checks that the parser handles simple addition."
+                    },
+                    {
+                        "test_name": "test_parser_operator_precedence",
+                        "passed": true,
+                        "description": "Ensures the parser respects operator precedence."
+                    },
+                    {
+                        "test_name": "test_parser_parentheses",
+                        "passed": true,
+                        "description": "Verifies that the parser correctly handles parentheses."
+                    },
+                    {
+                        "test_name": "test_parser_multiple_unary_minus",
+                        "passed": true,
+                        "description": "Checks that the parser handles multiple consecutive unary minuses."
+                    },
+                    {
+                        "test_name": "test_parser_nested_parentheses",
+                        "passed": true,
+                        "description": "Ensures the parser can handle nested parentheses."
+                    },
+                    {
+                        "test_name": "test_parser_missing_parenthesis",
+                        "passed": true,
+                        "description": "Checks that the parser raises an error for missing closing parenthesis."
+                    },
+                    {
+                        "test_name": "test_parser_unexpected_token",
+                        "passed": true,
+                        "description": "Verifies that the parser raises an error for unexpected tokens."
+                    },
+                    {
+                        "test_name": "test_parser_trailing_garbage",
+                        "passed": true,
+                        "description": "Ensures the parser raises an error for trailing invalid input."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[1 + 2-3]",
+                        "passed": true,
+                        "description": "Checks that the evaluator computes basic addition correctly."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[2 - 5--3]",
+                        "passed": true,
+                        "description": "Checks subtraction and handling of double minus."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[2 * 3-6]",
+                        "passed": true,
+                        "description": "Checks multiplication."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[8 / 2-4.0]",
+                        "passed": true,
+                        "description": "Checks division and float result."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[2 + 3 * 4-14]",
+                        "passed": true,
+                        "description": "Verifies operator precedence in mixed operations."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[(2 + 3) * 4-20]",
+                        "passed": true,
+                        "description": "Checks parentheses override precedence."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[-5--5]",
+                        "passed": true,
+                        "description": "Checks negative number evaluation."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[--5-5]",
+                        "passed": true,
+                        "description": "Checks double unary minus."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[---5--5]",
+                        "passed": true,
+                        "description": "Checks triple unary minus."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[3.5 + 2.5-6.0]",
+                        "passed": true,
+                        "description": "Checks floating point addition."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[-3.5 * 2--7.0]",
+                        "passed": true,
+                        "description": "Checks negative float multiplication."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[1 + 2 + 3 + 4-10]",
+                        "passed": true,
+                        "description": "Checks left-to-right associativity in addition."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[10 / 4-2.5]",
+                        "passed": true,
+                        "description": "Checks division with non-integer result."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[(1 + 2) * (3 + 4)-21]",
+                        "passed": true,
+                        "description": "Checks nested parentheses."
+                    },
+                    {
+                        "test_name": "test_evaluator_basic[-(-(-2))--2]",
+                        "passed": true,
+                        "description": "Checks nested unary minus."
+                    },
+                    {
+                        "test_name": "test_evaluator_division_by_zero",
+                        "passed": true,
+                        "description": "Ensures division by zero raises an EvalError."
+                    },
+                    {
+                        "test_name": "test_evaluator_invalid_unary_operator",
+                        "passed": true,
+                        "description": "Checks that unknown unary operators raise an error."
+                    },
+                    {
+                        "test_name": "test_evaluator_invalid_binary_operator",
+                        "passed": true,
+                        "description": "Checks that unknown binary operators raise an error."
+                    },
+                    {
+                        "test_name": "test_evaluator_invalid_ast_node",
+                        "passed": true,
+                        "description": "Checks that invalid AST nodes raise an error."
+                    },
+                    {
+                        "test_name": "test_help_handler_prints_help",
+                        "passed": true,
+                        "description": "Verifies that the help handler prints the help text."
+                    },
+                    {
+                        "test_name": "test_cli_handler_exit",
+                        "passed": true,
+                        "description": "Checks that entering 'exit' exits the REPL."
+                    },
+                    {
+                        "test_name": "test_cli_handler_quit",
+                        "passed": true,
+                        "description": "Checks that entering 'quit' exits the REPL."
+                    },
+                    {
+                        "test_name": "test_cli_handler_help",
+                        "passed": true,
+                        "description": "Checks that entering 'help' prints the help text."
+                    },
+                    {
+                        "test_name": "test_cli_handler_empty_line",
+                        "passed": true,
+                        "description": "Checks that empty lines are ignored in the REPL."
+                    },
+                    {
+                        "test_name": "test_cli_handler_valid_expression",
+                        "passed": true,
+                        "description": "Checks that valid expressions are evaluated and printed."
+                    },
+                    {
+                        "test_name": "test_cli_handler_invalid_expression",
+                        "passed": true,
+                        "description": "Checks that invalid expressions print an error."
+                    },
+                    {
+                        "test_name": "test_cli_handler_parse_error",
+                        "passed": true,
+                        "description": "Checks that parse errors are handled gracefully."
+                    },
+                    {
+                        "test_name": "test_cli_handler_keyboard_interrupt",
+                        "passed": true,
+                        "description": "Checks that KeyboardInterrupt is handled gracefully."
+                    },
+                    {
+                        "test_name": "test_cli_handler_eof",
+                        "passed": true,
+                        "description": "Checks that EOF (Ctrl+D) is handled gracefully."
+                    },
+                    {
+                        "test_name": "test_main_entry_point",
+                        "passed": true,
+                        "description": "Checks that the main entry point runs without error."
+                    }
+                ],
+                "issues": [
+                    {
+                        "type": "test_coverage",
+                        "severity": "minor",
+                        "description": "Test coverage is 95%. Some lines are not covered, mostly related to error branches and edge cases.",
+                        "location": "main.py: lines 35-36, 81, 187, 198, 210, 400, 434, 438-440, 456",
+                        "fix_suggestion": "Add tests that trigger these specific error branches, such as malformed input, unexpected tokens, or edge-case REPL exits."
+                    }
+                ],
+                "test_coverage": "95%",
+                "overall_assessment": "The code compiles and passes all 44 unit and integration tests, demonstrating robust handling of arithmetic expressions, operator precedence, parentheses, unary minus, and CLI commands. Error handling is comprehensive, and the REPL is user-friendly. The only minor issue is that a few error-handling branches are not covered by tests, but this does not affect core functionality. The code is well-structured, modular, and adheres to the specified architecture plan. No critical or major issues were found."
+            }
+        }
+    ],
+    "final_implementation": "# main.py\n\n\"\"\"\nOverview of Implementation Approach\n-----------------------------------\nThis file implements a command-line calculator as described in the architecture plan. The system is modular, with\ndistinct classes for the CLI handler (REPL loop and command history), parser (tokenization and AST construction),\nevaluator (AST evaluation), help handler, and error handling. The parser uses a recursive descent approach to\nhandle operator precedence, associativity, parentheses, and multiple unary minuses. The CLI uses the `readline`\nmodule for history navigation (with a fallback warning on Windows if unavailable). The system is robust against\ninvalid input and provides clear error messages.\n\nModules, Classes, and Functions Implemented\n-------------------------------------------\n- Imports: sys, readline, re, typing\n- Error classes: CalculatorError, ParseError, EvalError\n- Tokenizer: Token, TokenType, Tokenizer\n- AST Nodes: ASTNode, NumberNode, UnaryOpNode, BinOpNode\n- Parser: Parser\n- Evaluator: Evaluator\n- HelpHandler: HelpHandler\n- CLIHandler: CLIHandler (main REPL loop)\n- Main entry point: main()\n\nAll code is documented and follows PEP 8 guidelines.\n\"\"\"\n\nimport sys\nimport re\nfrom typing import List, Optional, Union, Any\n\n# Try to import readline for command history.\ntry:\n    import readline\nexcept ImportError:\n    readline = None  # On Windows, readline may not be available.\n\n\n# ---------------------------\n# Error Classes\n# ---------------------------\n\nclass CalculatorError(Exception):\n    \"\"\"Base class for calculator errors.\"\"\"\n    pass\n\nclass ParseError(CalculatorError):\n    \"\"\"Raised when parsing fails.\"\"\"\n    pass\n\nclass EvalError(CalculatorError):\n    \"\"\"Raised when evaluation fails.\"\"\"\n    pass\n\n\n# ---------------------------\n# Tokenizer\n# ---------------------------\n\nclass TokenType:\n    \"\"\"Enumeration of token types.\"\"\"\n    NUMBER = 'NUMBER'\n    PLUS = 'PLUS'\n    MINUS = 'MINUS'\n    MUL = 'MUL'\n    DIV = 'DIV'\n    LPAREN = 'LPAREN'\n    RPAREN = 'RPAREN'\n    EOF = 'EOF'\n\nclass Token:\n    \"\"\"\n    Represents a token in the input stream.\n    \"\"\"\n    def __init__(self, type_: str, value: Optional[Any] = None, pos: int = 0):\n        self.type = type_\n        self.value = value\n        self.pos = pos\n\n    def __repr__(self):\n        return f\"Token({self.type}, {self.value}, pos={self.pos})\"\n\nclass Tokenizer:\n    \"\"\"\n    Converts an input string into a list of tokens.\n    Handles numbers (integers and floats), operators, and parentheses.\n    \"\"\"\n    token_specification = [\n        ('NUMBER',  r'\\d+(\\.\\d*)?'),   # Integer or decimal number\n        ('PLUS',    r'\\+'),\n        ('MINUS',   r'-'),\n        ('MUL',     r'\\*'),\n        ('DIV',     r'/'),\n        ('LPAREN',  r'\\('),\n        ('RPAREN',  r'\\)'),\n        ('SKIP',    r'[ \\t]+'),        # Skip spaces and tabs\n        ('MISMATCH',r'.'),             # Any other character\n    ]\n    tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)\n    get_token = re.compile(tok_regex).match\n\n    def __init__(self, text: str):\n        self.text = text\n        self.pos = 0\n        self.tokens: List[Token] = []\n        self.current = 0\n        self._tokenize()\n\n    def _tokenize(self):\n        \"\"\"\n        Tokenizes the input string into a list of Token objects.\n        \"\"\"\n        mo = self.get_token(self.text)\n        pos = 0\n        while mo is not None:\n            kind = mo.lastgroup\n            value = mo.group()\n            if kind == 'NUMBER':\n                if '.' in value:\n                    value = float(value)\n                else:\n                    value = int(value)\n                self.tokens.append(Token(TokenType.NUMBER, value, pos))\n            elif kind == 'PLUS':\n                self.tokens.append(Token(TokenType.PLUS, value, pos))\n            elif kind == 'MINUS':\n                self.tokens.append(Token(TokenType.MINUS, value, pos))\n            elif kind == 'MUL':\n                self.tokens.append(Token(TokenType.MUL, value, pos))\n            elif kind == 'DIV':\n                self.tokens.append(Token(TokenType.DIV, value, pos))\n            elif kind == 'LPAREN':\n                self.tokens.append(Token(TokenType.LPAREN, value, pos))\n            elif kind == 'RPAREN':\n                self.tokens.append(Token(TokenType.RPAREN, value, pos))\n            elif kind == 'SKIP':\n                pass  # Ignore whitespace\n            elif kind == 'MISMATCH':\n                raise ParseError(f\"Unexpected character '{value}' at position {pos}\")\n            pos = mo.end()\n            mo = self.get_token(self.text, pos)\n        self.tokens.append(Token(TokenType.EOF, None, pos))\n\n    def peek(self) -> Token:\n        \"\"\"\n        Returns the current token without consuming it.\n        \"\"\"\n        return self.tokens[self.current]\n\n    def next(self) -> Token:\n        \"\"\"\n        Consumes and returns the current token.\n        \"\"\"\n        token = self.tokens[self.current]\n        self.current += 1\n        return token\n\n    def expect(self, type_: str) -> Token:\n        \"\"\"\n        Consumes and returns the current token if it matches the expected type.\n        Raises ParseError otherwise.\n        \"\"\"\n        token = self.peek()\n        if token.type != type_:\n            raise ParseError(f\"Expected token {type_}, got {token.type} at position {token.pos}\")\n        return self.next()\n\n\n# ---------------------------\n# AST Nodes\n# ---------------------------\n\nclass ASTNode:\n    \"\"\"\n    Base class for AST nodes.\n    \"\"\"\n    pass\n\nclass NumberNode(ASTNode):\n    \"\"\"\n    Represents a numeric literal in the AST.\n    \"\"\"\n    def __init__(self, value: Union[int, float]):\n        self.value = value\n\n    def __repr__(self):\n        return f\"NumberNode({self.value})\"\n\nclass UnaryOpNode(ASTNode):\n    \"\"\"\n    Represents a unary operation (e.g., -3, --3) in the AST.\n    \"\"\"\n    def __init__(self, op: str, operand: ASTNode):\n        self.op = op\n        self.operand = operand\n\n    def __repr__(self):\n        return f\"UnaryOpNode({self.op}, {self.operand})\"\n\nclass BinOpNode(ASTNode):\n    \"\"\"\n    Represents a binary operation (e.g., 1 + 2) in the AST.\n    \"\"\"\n    def __init__(self, left: ASTNode, op: str, right: ASTNode):\n        self.left = left\n        self.op = op\n        self.right = right\n\n    def __repr__(self):\n        return f\"BinOpNode({self.left}, {self.op}, {self.right})\"\n\n\n# ---------------------------\n# Parser\n# ---------------------------\n\nclass Parser:\n    \"\"\"\n    Recursive descent parser for arithmetic expressions.\n    Handles operator precedence, associativity, parentheses, and multiple unary minuses.\n    Grammar:\n        expr    : term ((PLUS|MINUS) term)*\n        term    : factor ((MUL|DIV) factor)*\n        factor  : (MINUS)* primary\n        primary : NUMBER | LPAREN expr RPAREN\n    \"\"\"\n    def __init__(self, tokenizer: Tokenizer):\n        self.tokenizer = tokenizer\n\n    def parse(self) -> ASTNode:\n        \"\"\"\n        Parses the input and returns the root AST node.\n        \"\"\"\n        node = self.expr()\n        if self.tokenizer.peek().type != TokenType.EOF:\n            token = self.tokenizer.peek()\n            raise ParseError(f\"Unexpected token '{token.value}' at position {token.pos}\")\n        return node\n\n    def expr(self) -> ASTNode:\n        \"\"\"\n        expr : term ((PLUS|MINUS) term)*\n        \"\"\"\n        node = self.term()\n        while self.tokenizer.peek().type in (TokenType.PLUS, TokenType.MINUS):\n            op_token = self.tokenizer.next()\n            right = self.term()\n            node = BinOpNode(node, op_token.type, right)\n        return node\n\n    def term(self) -> ASTNode:\n        \"\"\"\n        term : factor ((MUL|DIV) factor)*\n        \"\"\"\n        node = self.factor()\n        while self.tokenizer.peek().type in (TokenType.MUL, TokenType.DIV):\n            op_token = self.tokenizer.next()\n            right = self.factor()\n            node = BinOpNode(node, op_token.type, right)\n        return node\n\n    def factor(self) -> ASTNode:\n        \"\"\"\n        factor : (MINUS)* primary\n        Handles multiple consecutive unary minuses.\n        \"\"\"\n        minus_count = 0\n        while self.tokenizer.peek().type == TokenType.MINUS:\n            self.tokenizer.next()\n            minus_count += 1\n        node = self.primary()\n        if minus_count % 2 == 1:\n            node = UnaryOpNode(TokenType.MINUS, node)\n        return node\n\n    def primary(self) -> ASTNode:\n        \"\"\"\n        primary : NUMBER | LPAREN expr RPAREN\n        \"\"\"\n        token = self.tokenizer.peek()\n        if token.type == TokenType.NUMBER:\n            self.tokenizer.next()\n            return NumberNode(token.value)\n        elif token.type == TokenType.LPAREN:\n            self.tokenizer.next()\n            node = self.expr()\n            self.tokenizer.expect(TokenType.RPAREN)\n            return node\n        else:\n            raise ParseError(f\"Expected number or '(', got '{token.value}' at position {token.pos}\")\n\n\n# ---------------------------\n# Evaluator\n# ---------------------------\n\nclass Evaluator:\n    \"\"\"\n    Evaluates an AST and computes the result.\n    Handles division by zero and other runtime errors.\n    \"\"\"\n    def eval(self, node: ASTNode) -> Union[int, float]:\n        \"\"\"\n        Recursively evaluates the AST node.\n        \"\"\"\n        if isinstance(node, NumberNode):\n            return node.value\n        elif isinstance(node, UnaryOpNode):\n            operand = self.eval(node.operand)\n            if node.op == TokenType.MINUS:\n                return -operand\n            else:\n                raise EvalError(f\"Unknown unary operator: {node.op}\")\n        elif isinstance(node, BinOpNode):\n            left = self.eval(node.left)\n            right = self.eval(node.right)\n            if node.op == TokenType.PLUS:\n                return left + right\n            elif node.op == TokenType.MINUS:\n                return left - right\n            elif node.op == TokenType.MUL:\n                return left * right\n            elif node.op == TokenType.DIV:\n                if right == 0:\n                    raise EvalError(\"Division by zero\")\n                return left / right\n            else:\n                raise EvalError(f\"Unknown binary operator: {node.op}\")\n        else:\n            raise EvalError(\"Invalid AST node\")\n\n\n# ---------------------------\n# Help Handler\n# ---------------------------\n\nclass HelpHandler:\n    \"\"\"\n    Prints usage instructions for the calculator.\n    \"\"\"\n    HELP_TEXT = \"\"\"\nCommand-Line Calculator Help\n---------------------------\nSupported operations:\n  - Addition:           1 + 2\n  - Subtraction:        3 - 4\n  - Multiplication:     5 * 6\n  - Division:           7 / 8\n  - Parentheses:        (1 + 2) * 3\n  - Negative numbers:   -5, --3 (multiple minuses allowed)\n  - Floating point:     3.14 * 2\n\nSpecial commands:\n  - help      : Show this help message\n  - exit/quit : Exit the calculator\n\nOther features:\n  - Use up/down arrows to navigate command history (if supported)\n  - Errors are reported with clear messages\n\nExamples:\n  > 2 + 2\n  4\n  > --3 * (2 + 1)\n  9\n  > 1 / 0\n  Error: Division by zero\n\"\"\"\n\n    @staticmethod\n    def print_help():\n        print(HelpHandler.HELP_TEXT.strip())\n\n\n# ---------------------------\n# CLI Handler (REPL)\n# ---------------------------\n\nclass CLIHandler:\n    \"\"\"\n    Handles the REPL loop, command history, and user interaction.\n    \"\"\"\n    PROMPT = '> '\n\n    def __init__(self):\n        self.evaluator = Evaluator()\n        self.running = True\n        self._setup_history()\n\n    def _setup_history(self):\n        \"\"\"\n        Sets up command-line history using readline, if available.\n        \"\"\"\n        if readline is not None:\n            # Enable history file if desired (not persistent here).\n            readline.parse_and_bind('tab: complete')\n            readline.parse_and_bind('set editing-mode emacs')\n        else:\n            # Warn user if history is not available.\n            print(\"Warning: Command history (up/down arrows) is not available on this platform.\", file=sys.stderr)\n\n    def run(self):\n        \"\"\"\n        Main REPL loop.\n        \"\"\"\n        while self.running:\n            try:\n                line = input(self.PROMPT)\n            except (EOFError, KeyboardInterrupt):\n                print()  # Newline for clean exit\n                break\n\n            line = line.strip()\n            if not line:\n                continue\n\n            # Handle special commands\n            if line.lower() in ('exit', 'quit'):\n                self.running = False\n                print(\"Goodbye!\")\n                break\n            elif line.lower() == 'help':\n                HelpHandler.print_help()\n                continue\n\n            # Parse and evaluate the expression\n            try:\n                tokenizer = Tokenizer(line)\n                parser = Parser(tokenizer)\n                ast = parser.parse()\n                result = self.evaluator.eval(ast)\n                # Print as int if result is integer-valued\n                if isinstance(result, float) and result.is_integer():\n                    result = int(result)\n                print(result)\n            except CalculatorError as e:\n                print(f\"Error: {e}\")\n            except Exception as e:\n                # Catch-all for unexpected errors\n                print(f\"Unexpected error: {e}\")\n\n# ---------------------------\n# Main Entry Point\n# ---------------------------\n\ndef main():\n    \"\"\"\n    Entry point for the calculator application.\n    \"\"\"\n    print(\"Welcome to the Command-Line Calculator!\")\n    print(\"Type 'help' for instructions, or 'exit' to quit.\")\n    cli = CLIHandler()\n    cli.run()\n\nif __name__ == '__main__':\n    main()\n",
+    "final_test_report": {
+        "passed": true,
+        "results": {
+            "compilation_success": true,
+            "test_results": [
+                {
+                    "test_name": "test_tokenizer_simple_expression",
+                    "passed": true,
+                    "description": "Verifies that the tokenizer correctly tokenizes a simple arithmetic expression."
+                },
+                {
+                    "test_name": "test_tokenizer_float_and_int",
+                    "passed": true,
+                    "description": "Checks that the tokenizer handles both integer and floating-point numbers."
+                },
+                {
+                    "test_name": "test_tokenizer_parentheses_and_operators",
+                    "passed": true,
+                    "description": "Ensures the tokenizer recognizes parentheses and all supported operators."
+                },
+                {
+                    "test_name": "test_tokenizer_skip_whitespace",
+                    "passed": true,
+                    "description": "Confirms that whitespace is ignored by the tokenizer."
+                },
+                {
+                    "test_name": "test_tokenizer_unexpected_character",
+                    "passed": true,
+                    "description": "Checks that the tokenizer raises a ParseError on unexpected characters."
+                },
+                {
+                    "test_name": "test_parser_number",
+                    "passed": true,
+                    "description": "Verifies that the parser correctly parses a single number."
+                },
+                {
+                    "test_name": "test_parser_simple_addition",
+                    "passed": true,
+                    "description": "Checks that the parser handles simple addition."
+                },
+                {
+                    "test_name": "test_parser_operator_precedence",
+                    "passed": true,
+                    "description": "Ensures the parser respects operator precedence."
+                },
+                {
+                    "test_name": "test_parser_parentheses",
+                    "passed": true,
+                    "description": "Verifies that the parser correctly handles parentheses."
+                },
+                {
+                    "test_name": "test_parser_multiple_unary_minus",
+                    "passed": true,
+                    "description": "Checks that the parser handles multiple consecutive unary minuses."
+                },
+                {
+                    "test_name": "test_parser_nested_parentheses",
+                    "passed": true,
+                    "description": "Ensures the parser can handle nested parentheses."
+                },
+                {
+                    "test_name": "test_parser_missing_parenthesis",
+                    "passed": true,
+                    "description": "Checks that the parser raises an error for missing closing parenthesis."
+                },
+                {
+                    "test_name": "test_parser_unexpected_token",
+                    "passed": true,
+                    "description": "Verifies that the parser raises an error for unexpected tokens."
+                },
+                {
+                    "test_name": "test_parser_trailing_garbage",
+                    "passed": true,
+                    "description": "Ensures the parser raises an error for trailing invalid input."
+                },
+                {
+                    "test_name": "test_evaluator_basic[1 + 2-3]",
+                    "passed": true,
+                    "description": "Checks that the evaluator computes basic addition correctly."
+                },
+                {
+                    "test_name": "test_evaluator_basic[2 - 5--3]",
+                    "passed": true,
+                    "description": "Checks subtraction and handling of double minus."
+                },
+                {
+                    "test_name": "test_evaluator_basic[2 * 3-6]",
+                    "passed": true,
+                    "description": "Checks multiplication."
+                },
+                {
+                    "test_name": "test_evaluator_basic[8 / 2-4.0]",
+                    "passed": true,
+                    "description": "Checks division and float result."
+                },
+                {
+                    "test_name": "test_evaluator_basic[2 + 3 * 4-14]",
+                    "passed": true,
+                    "description": "Verifies operator precedence in mixed operations."
+                },
+                {
+                    "test_name": "test_evaluator_basic[(2 + 3) * 4-20]",
+                    "passed": true,
+                    "description": "Checks parentheses override precedence."
+                },
+                {
+                    "test_name": "test_evaluator_basic[-5--5]",
+                    "passed": true,
+                    "description": "Checks negative number evaluation."
+                },
+                {
+                    "test_name": "test_evaluator_basic[--5-5]",
+                    "passed": true,
+                    "description": "Checks double unary minus."
+                },
+                {
+                    "test_name": "test_evaluator_basic[---5--5]",
+                    "passed": true,
+                    "description": "Checks triple unary minus."
+                },
+                {
+                    "test_name": "test_evaluator_basic[3.5 + 2.5-6.0]",
+                    "passed": true,
+                    "description": "Checks floating point addition."
+                },
+                {
+                    "test_name": "test_evaluator_basic[-3.5 * 2--7.0]",
+                    "passed": true,
+                    "description": "Checks negative float multiplication."
+                },
+                {
+                    "test_name": "test_evaluator_basic[1 + 2 + 3 + 4-10]",
+                    "passed": true,
+                    "description": "Checks left-to-right associativity in addition."
+                },
+                {
+                    "test_name": "test_evaluator_basic[10 / 4-2.5]",
+                    "passed": true,
+                    "description": "Checks division with non-integer result."
+                },
+                {
+                    "test_name": "test_evaluator_basic[(1 + 2) * (3 + 4)-21]",
+                    "passed": true,
+                    "description": "Checks nested parentheses."
+                },
+                {
+                    "test_name": "test_evaluator_basic[-(-(-2))--2]",
+                    "passed": true,
+                    "description": "Checks nested unary minus."
+                },
+                {
+                    "test_name": "test_evaluator_division_by_zero",
+                    "passed": true,
+                    "description": "Ensures division by zero raises an EvalError."
+                },
+                {
+                    "test_name": "test_evaluator_invalid_unary_operator",
+                    "passed": true,
+                    "description": "Checks that unknown unary operators raise an error."
+                },
+                {
+                    "test_name": "test_evaluator_invalid_binary_operator",
+                    "passed": true,
+                    "description": "Checks that unknown binary operators raise an error."
+                },
+                {
+                    "test_name": "test_evaluator_invalid_ast_node",
+                    "passed": true,
+                    "description": "Checks that invalid AST nodes raise an error."
+                },
+                {
+                    "test_name": "test_help_handler_prints_help",
+                    "passed": true,
+                    "description": "Verifies that the help handler prints the help text."
+                },
+                {
+                    "test_name": "test_cli_handler_exit",
+                    "passed": true,
+                    "description": "Checks that entering 'exit' exits the REPL."
+                },
+                {
+                    "test_name": "test_cli_handler_quit",
+                    "passed": true,
+                    "description": "Checks that entering 'quit' exits the REPL."
+                },
+                {
+                    "test_name": "test_cli_handler_help",
+                    "passed": true,
+                    "description": "Checks that entering 'help' prints the help text."
+                },
+                {
+                    "test_name": "test_cli_handler_empty_line",
+                    "passed": true,
+                    "description": "Checks that empty lines are ignored in the REPL."
+                },
+                {
+                    "test_name": "test_cli_handler_valid_expression",
+                    "passed": true,
+                    "description": "Checks that valid expressions are evaluated and printed."
+                },
+                {
+                    "test_name": "test_cli_handler_invalid_expression",
+                    "passed": true,
+                    "description": "Checks that invalid expressions print an error."
+                },
+                {
+                    "test_name": "test_cli_handler_parse_error",
+                    "passed": true,
+                    "description": "Checks that parse errors are handled gracefully."
+                },
+                {
+                    "test_name": "test_cli_handler_keyboard_interrupt",
+                    "passed": true,
+                    "description": "Checks that KeyboardInterrupt is handled gracefully."
+                },
+                {
+                    "test_name": "test_cli_handler_eof",
+                    "passed": true,
+                    "description": "Checks that EOF (Ctrl+D) is handled gracefully."
+                },
+                {
+                    "test_name": "test_main_entry_point",
+                    "passed": true,
+                    "description": "Checks that the main entry point runs without error."
+                }
+            ],
+            "issues": [
+                {
+                    "type": "test_coverage",
+                    "severity": "minor",
+                    "description": "Test coverage is 95%. Some lines are not covered, mostly related to error branches and edge cases.",
+                    "location": "main.py: lines 35-36, 81, 187, 198, 210, 400, 434, 438-440, 456",
+                    "fix_suggestion": "Add tests that trigger these specific error branches, such as malformed input, unexpected tokens, or edge-case REPL exits."
+                }
+            ],
+            "test_coverage": "95%",
+            "overall_assessment": "The code compiles and passes all 44 unit and integration tests, demonstrating robust handling of arithmetic expressions, operator precedence, parentheses, unary minus, and CLI commands. Error handling is comprehensive, and the REPL is user-friendly. The only minor issue is that a few error-handling branches are not covered by tests, but this does not affect core functionality. The code is well-structured, modular, and adheres to the specified architecture plan. No critical or major issues were found."
+        }
+    },
+    "iterations_required": 1,
+    "success": true
+}

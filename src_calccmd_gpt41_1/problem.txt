@@ -1,0 +1,11 @@
+create a cli calculator that runs in a REPL loop and handles basic arithmetic. 
+the calculator should support command line history via up/down arrow.
+Ensure that operations follow the precedence rules for arithmetic, and handle negative number literals properly, 
+keeping in mind that consecutive minus signs can precede a unary expression. 
+For example: --3 is equal to 3. 
+The negative sign should have higher precedence when preceding a unary expression.
+Allow expressions to be inside parentheses.
+Provide a help command that explains how to use the calculator. 
+The basic arithmetic operations (+,-,/,*) when used to take two arguments should treat multiplication 
+and division with higher priority than addition and subtraction. 
+When precedent is equal, operations are handled in sequence.
