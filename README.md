@@ -2,6 +2,8 @@
 
 This is an experiment using Claude 3.7 to design and create an "agentic framework" using only barebones dependencies and raw openai (or openai-compatible) API calls.
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/oshea00/codeagents)
+
 # Example of creating a calculator
 
 The description given to the program for the calculator program:
