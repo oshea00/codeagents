@@ -1,445 +1,910 @@
-#!/usr/bin/env python3
-import unittest
 import math
-from unittest.mock import patch, MagicMock
-import io
+import operator
 import sys
+import types
+import pytest
 
-# Import components from the main module
 from main import (
-    TokenType, Token, Lexer, Parser, CalculatorEngine, 
-    HistoryManager, HelpSystem, ScientificCalculator
+    FunctionLibrary,
+    SymbolTable,
+    Tokenizer,
+    Parser,
+    Evaluator,
+    NumberNode,
+    VariableNode,
+    UnaryOpNode,
+    BinaryOpNode,
+    AssignNode,
+    FunctionCallNode,
+    ASTNode,
+    EOF,
+    IDENTIFIER,
+    NUMBER,
+    OPERATOR,
+    LPAREN,
+    RPAREN,
+    COMMA,
+    ASSIGN,
 )
 
-class TestToken(unittest.TestCase):
-    def test_token_initialization(self):
-        token = Token(TokenType.NUMBER, "123", 5)
-        self.assertEqual(token.type, TokenType.NUMBER)
-        self.assertEqual(token.value, "123")
-        self.assertEqual(token.position, 5)
-        
-    def test_token_representation(self):
-        token = Token(TokenType.PLUS, "+", 10)
-        self.assertEqual(repr(token), "Token(TokenType.PLUS, +, pos=10)")
+# ---------------------------
+# FunctionLibrary Tests
+# ---------------------------
 
+def test_function_library_is_function_and_list():
+    fl = FunctionLibrary()
+    assert fl.is_function('sin')
+    assert fl.is_function('log')
+    assert not fl.is_function('notafunc')
+    funcs = fl.list_functions()
+    assert 'sin' in funcs
+    assert 'cos' in funcs
+    assert 'factorial' in funcs
+    assert 'bin' in funcs
 
-class TestLexer(unittest.TestCase):
-    def setUp(self):
-        self.lexer = Lexer()
-        
-    def test_tokenize_numbers(self):
-        tokens = self.lexer.tokenize("123.45")
-        self.assertEqual(len(tokens), 1)
-        self.assertEqual(tokens[0].type, TokenType.NUMBER)
-        self.assertEqual(tokens[0].value, "123.45")
-        
-    def test_tokenize_operators(self):
-        tokens = self.lexer.tokenize("1 + 2 - 3 * 4 / 5 % 6 ^ 7")
-        self.assertEqual(len(tokens), 13)
-        self.assertEqual(tokens[1].type, TokenType.PLUS)
-        self.assertEqual(tokens[3].type, TokenType.MINUS)
-        self.assertEqual(tokens[5].type, TokenType.MULTIPLY)
-        self.assertEqual(tokens[7].type, TokenType.DIVIDE)
-        self.assertEqual(tokens[9].type, TokenType.MODULO)
-        self.assertEqual(tokens[11].type, TokenType.POWER)
-        
-    def test_tokenize_parentheses(self):
-        tokens = self.lexer.tokenize("(1 + 2) * 3")
-        self.assertEqual(len(tokens), 7)
-        self.assertEqual(tokens[0].type, TokenType.LPAREN)
-        self.assertEqual(tokens[4].type, TokenType.RPAREN)
-        
-    def test_tokenize_functions(self):
-        tokens = self.lexer.tokenize("sin(0.5) + cos(0.5)")
-        self.assertEqual(len(tokens), 9)
-        self.assertEqual(tokens[0].type, TokenType.FUNCTION)
-        self.assertEqual(tokens[0].value, "sin")
-        self.assertEqual(tokens[5].type, TokenType.FUNCTION)
-        self.assertEqual(tokens[5].value, "cos")
-        
-    def test_tokenize_constants(self):
-        tokens = self.lexer.tokenize("pi + e")
-        self.assertEqual(len(tokens), 3)
-        self.assertEqual(tokens[0].type, TokenType.CONSTANT)
-        self.assertEqual(tokens[0].value, "pi")
-        self.assertEqual(tokens[2].type, TokenType.CONSTANT)
-        self.assertEqual(tokens[2].value, "e")
-        
-    def test_tokenize_variables(self):
-        tokens = self.lexer.tokenize("x = 5")
-        self.assertEqual(len(tokens), 3)
-        self.assertEqual(tokens[0].type, TokenType.VARIABLE)
-        self.assertEqual(tokens[0].value, "x")
-        self.assertEqual(tokens[1].type, TokenType.EQUALS)
-        
-    def test_tokenize_commands(self):
-        tokens = self.lexer.tokenize("help")
-        self.assertEqual(len(tokens), 1)
-        self.assertEqual(tokens[0].type, TokenType.COMMAND)
-        self.assertEqual(tokens[0].value, "help")
-        
-        tokens = self.lexer.tokenize("help functions")
-        self.assertEqual(len(tokens), 1)
-        self.assertEqual(tokens[0].type, TokenType.COMMAND)
-        self.assertEqual(tokens[0].value, "help functions")
-        
-    def test_tokenize_unary_minus(self):
-        tokens = self.lexer.tokenize("-5")
-        self.assertEqual(len(tokens), 1)
-        self.assertEqual(tokens[0].type, TokenType.NUMBER)
-        self.assertEqual(tokens[0].value, "-5")
-        
-        tokens = self.lexer.tokenize("5 + -3")
-        self.assertEqual(len(tokens), 3)
-        self.assertEqual(tokens[2].type, TokenType.NUMBER)
-        self.assertEqual(tokens[2].value, "-3")
-        
-    def test_tokenize_invalid_character(self):
-        with self.assertRaises(ValueError):
-            self.lexer.tokenize("5 $ 3")
-            
-    def test_tokenize_invalid_number(self):
-        with self.assertRaises(ValueError):
-            self.lexer.tokenize("5.5.5")
+def test_function_library_call_valid():
+    fl = FunctionLibrary()
+    assert fl.call('sin', [math.pi/2]) == pytest.approx(1.0)
+    assert fl.call('cos', [0]) == pytest.approx(1.0)
+    assert fl.call('sqrt', [9]) == 3.0
+    assert fl.call('abs', [-5]) == 5
+    assert fl.call('factorial', [5]) == 120
+    assert fl.call('bin', [10]) == '0b1010'
+    assert fl.call('hex', [255]) == '0xff'
+    assert fl.call('oct', [8]) == '0o10'
+    assert fl.call('round', [2.7]) == 3
 
+def test_function_library_call_invalid_function():
+    fl = FunctionLibrary()
+    with pytest.raises(ValueError):
+        fl.call('notafunc', [1])
 
-class TestParser(unittest.TestCase):
-    def setUp(self):
-        self.parser = Parser()
-        self.lexer = Lexer()
-        
-    def test_parse_simple_expression(self):
-        tokens = self.lexer.tokenize("1 + 2")
-        rpn = self.parser.parse(tokens)
-        self.assertEqual(len(rpn), 3)
-        self.assertEqual(rpn[0].value, "1")
-        self.assertEqual(rpn[1].value, "2")
-        self.assertEqual(rpn[2].value, "+")
-        
-    def test_parse_expression_with_precedence(self):
-        tokens = self.lexer.tokenize("1 + 2 * 3")
-        rpn = self.parser.parse(tokens)
-        self.assertEqual(len(rpn), 5)
-        self.assertEqual(rpn[0].value, "1")
-        self.assertEqual(rpn[1].value, "2")
-        self.assertEqual(rpn[2].value, "3")
-        self.assertEqual(rpn[3].value, "*")
-        self.assertEqual(rpn[4].value, "+")
-        
-    def test_parse_expression_with_parentheses(self):
-        tokens = self.lexer.tokenize("(1 + 2) * 3")
-        rpn = self.parser.parse(tokens)
-        self.assertEqual(len(rpn), 5)
-        self.assertEqual(rpn[0].value, "1")
-        self.assertEqual(rpn[1].value, "2")
-        self.assertEqual(rpn[2].value, "+")
-        self.assertEqual(rpn[3].value, "3")
-        self.assertEqual(rpn[4].value, "*")
-        
-    def test_parse_expression_with_function(self):
-        tokens = self.lexer.tokenize("sin(0.5)")
-        rpn = self.parser.parse(tokens)
-        self.assertEqual(len(rpn), 2)
-        self.assertEqual(rpn[0].value, "0.5")
-        self.assertEqual(rpn[1].value, "sin")
-        
-    def test_parse_expression_with_unary_minus(self):
-        tokens = self.lexer.tokenize("-5")
-        rpn = self.parser.parse(tokens)
-        self.assertEqual(len(rpn), 1)
-        self.assertEqual(rpn[0].value, "-5")
-        
-    def test_parse_variable_assignment(self):
-        tokens = self.lexer.tokenize("x = 5")
-        rpn = self.parser.parse(tokens)
-        self.assertEqual(len(rpn), 3)
-        self.assertEqual(rpn[0].type, TokenType.VARIABLE)
-        self.assertEqual(rpn[0].value, "x")
-        self.assertEqual(rpn[1].type, TokenType.EQUALS)
-        self.assertEqual(rpn[2].type, TokenType.NUMBER)
-        
-    def test_parse_command(self):
-        tokens = self.lexer.tokenize("help")
-        rpn = self.parser.parse(tokens)
-        self.assertEqual(len(rpn), 1)
-        self.assertEqual(rpn[0].type, TokenType.COMMAND)
-        
-    def test_parse_mismatched_parentheses(self):
-        tokens = self.lexer.tokenize("(1 + 2")
-        with self.assertRaises(ValueError):
-            self.parser.parse(tokens)
-            
-        tokens = self.lexer.tokenize("1 + 2)")
-        with self.assertRaises(ValueError):
-            self.parser.parse(tokens)
+def test_function_library_call_wrong_arity():
+    fl = FunctionLibrary()
+    with pytest.raises(ValueError):
+        fl.call('sin', [1,2])
+    with pytest.raises(ValueError):
+        fl.call('cos', [])
 
+def test_function_library_call_math_error():
+    fl = FunctionLibrary()
+    with pytest.raises(ValueError):
+        fl.call('sqrt', [-1])
+    with pytest.raises(ValueError):
+        fl.call('factorial', [-2])
 
-class TestCalculatorEngine(unittest.TestCase):
-    def setUp(self):
-        self.calculator = CalculatorEngine()
-        
-    def test_evaluate_basic_arithmetic(self):
-        self.assertAlmostEqual(self.calculator.evaluate_expression("1 + 2"), 3.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("1 - 2"), -1.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("2 * 3"), 6.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("6 / 3"), 2.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("7 % 3"), 1.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("2 ^ 3"), 8.0)
-        
-    def test_evaluate_order_of_operations(self):
-        self.assertAlmostEqual(self.calculator.evaluate_expression("1 + 2 * 3"), 7.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("(1 + 2) * 3"), 9.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("2 * 3 + 4 * 5"), 26.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("2 + 3 * 4 ^ 2"), 50.0)
-        
-    def test_evaluate_functions(self):
-        self.assertAlmostEqual(self.calculator.evaluate_expression("sin(0)"), 0.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("cos(0)"), 1.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("sqrt(16)"), 4.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("log(100)"), 2.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("ln(e)"), 1.0)
-        
-    def test_evaluate_constants(self):
-        self.assertAlmostEqual(self.calculator.evaluate_expression("pi"), math.pi)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("e"), math.e)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("2 * pi"), 2 * math.pi)
-        
-    def test_evaluate_variables(self):
-        self.calculator.evaluate_expression("x = 5")
-        self.assertEqual(self.calculator.variables["x"], 5.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("x + 3"), 8.0)
-        
-        self.calculator.evaluate_expression("y = x * 2")
-        self.assertEqual(self.calculator.variables["y"], 10.0)
-        
-    def test_ans_variable(self):
-        self.calculator.evaluate_expression("5 + 5")
-        self.assertEqual(self.calculator.variables["ans"], 10.0)
-        self.assertAlmostEqual(self.calculator.evaluate_expression("ans * 2"), 20.0)
-        
-    def test_memory_functions(self):
-        self.calculator.evaluate_expression("5 + 5")
-        self.calculator.store_in_memory(10.0)
-        self.assertEqual(self.calculator.recall_from_memory(), 10.0)
-        
-        self.calculator.clear_memory()
-        self.assertIsNone(self.calculator.recall_from_memory())
-        
-    def test_division_by_zero(self):
-        with self.assertRaises(ValueError):
-            self.calculator.evaluate_expression("5 / 0")
-            
-    def test_modulo_by_zero(self):
-        with self.assertRaises(ValueError):
-            self.calculator.evaluate_expression("5 % 0")
-            
-    def test_invalid_function_argument(self):
-        with self.assertRaises(ValueError):
-            self.calculator.evaluate_expression("sqrt(-1)")
-            
-    def test_undefined_variable(self):
-        with self.assertRaises(ValueError):
-            self.calculator.evaluate_expression("undefined_var + 5")
-            
-    def test_invalid_expression(self):
-        with self.assertRaises(ValueError):
-            self.calculator.evaluate_expression("1 + + 2")
+# ---------------------------
+# SymbolTable Tests
+# ---------------------------
 
+def test_symbol_table_predefined_constants():
+    st = SymbolTable()
+    assert st.get('pi') == math.pi
+    assert st.get('e') == math.e
+    assert st.get('tau') == math.tau
 
-class TestHistoryManager(unittest.TestCase):
-    def setUp(self):
-        self.history = HistoryManager()
-        
-    def test_add_entry(self):
-        self.history.add_entry("1 + 2", 3.0)
-        self.assertEqual(len(self.history.history), 1)
-        self.assertEqual(self.history.history[0], ("1 + 2", 3.0))
-        
-    def test_get_history(self):
-        self.history.add_entry("1 + 2", 3.0)
-        self.history.add_entry("3 * 4", 12.0)
-        history = self.history.get_history()
-        self.assertEqual(len(history), 2)
-        self.assertEqual(history[0], ("1 + 2", 3.0))
-        self.assertEqual(history[1], ("3 * 4", 12.0))
-        
-    def test_clear_history(self):
-        self.history.add_entry("1 + 2", 3.0)
-        self.history.clear_history()
-        self.assertEqual(len(self.history.history), 0)
-        
-    def test_get_last_result(self):
-        self.assertIsNone(self.history.get_last_result())
-        
-        self.history.add_entry("1 + 2", 3.0)
-        self.assertEqual(self.history.get_last_result(), 3.0)
-        
-        self.history.add_entry("3 * 4", 12.0)
-        self.assertEqual(self.history.get_last_result(), 12.0)
+def test_symbol_table_set_and_get():
+    st = SymbolTable()
+    st.set('x', 42)
+    assert st.get('x') == 42
+    st.set('y', 3.14)
+    assert st.get('y') == 3.14
 
+def test_symbol_table_undefined_variable():
+    st = SymbolTable()
+    with pytest.raises(NameError):
+        st.get('not_defined')
 
-class TestHelpSystem(unittest.TestCase):
-    def setUp(self):
-        self.help = HelpSystem()
-        
-    def test_get_general_help(self):
-        help_text = self.help.get_help()
-        self.assertIn("Scientific Calculator Help", help_text)
-        self.assertIn("Basic usage:", help_text)
-        
-    def test_get_topic_help(self):
-        operators_help = self.help.get_help("operators")
-        self.assertIn("Operators", operators_help)
-        self.assertIn("Addition", operators_help)
-        
-        functions_help = self.help.get_help("functions")
-        self.assertIn("Mathematical Functions", functions_help)
-        self.assertIn("Trigonometric Functions:", functions_help)
-        
-    def test_get_nonexistent_topic(self):
-        help_text = self.help.get_help("nonexistent")
-        self.assertIn("Help topic 'nonexistent' not found", help_text)
-        
-    def test_all_topics(self):
-        topics = ["general", "operators", "functions", "constants", 
-                 "variables", "memory", "history", "commands"]
-        
-        for topic in topics:
-            help_text = self.help.get_help(topic)
-            self.assertIsNotNone(help_text)
-            self.assertNotEqual(help_text, "")
+def test_symbol_table_list_symbols():
+    st = SymbolTable()
+    st.set('foo', 1)
+    st.set('bar', 2)
+    symbols = st.list_symbols()
+    assert 'foo' in symbols
+    assert 'bar' in symbols
+    assert 'pi' in symbols
+    assert 'e' in symbols
 
+# ---------------------------
+# Tokenizer Tests
+# ---------------------------
 
-class TestScientificCalculator(unittest.TestCase):
-    def setUp(self):
-        self.calculator = ScientificCalculator()
-        
-    def test_process_help_command(self):
-        result = self.calculator._process_input("help")
-        self.assertIn("Scientific Calculator Help", result)
-        
-        result = self.calculator._process_input("help operators")
-        self.assertIn("Operators", result)
-        
-    def test_process_exit_command(self):
-        result = self.calculator._process_input("exit")
-        self.assertEqual(result, "Goodbye!")
-        self.assertFalse(self.calculator.running)
-        
-        # Reset for other tests
-        self.calculator.running = True
-        
-        result = self.calculator._process_input("quit")
-        self.assertEqual(result, "Goodbye!")
-        self.assertFalse(self.calculator.running)
-        
-    def test_process_history_command(self):
-        # Empty history
-        result = self.calculator._process_input("history")
-        self.assertEqual(result, "History is empty.")
-        
-        # Add entries to history
-        self.calculator._process_input("1 + 2")
-        self.calculator._process_input("3 * 4")
-        
-        result = self.calculator._process_input("history")
-        self.assertIn("1: 1 + 2 = 3.0", result)
-        self.assertIn("2: 3 * 4 = 12.0", result)
-        
-    def test_process_clear_command(self):
-        self.calculator._process_input("1 + 2")
-        result = self.calculator._process_input("clear")
-        self.assertEqual(result, "History cleared.")
-        
-        result = self.calculator._process_input("history")
-        self.assertEqual(result, "History is empty.")
-        
-    def test_process_vars_command(self):
-        result = self.calculator._process_input("vars")
-        self.assertIn("ans = 0", result)
-        
-        self.calculator._process_input("x = 5")
-        result = self.calculator._process_input("vars")
-        self.assertIn("x = 5.0", result)
-        
-    def test_process_memory_commands(self):
-        # No result to store
-        result = self.calculator._process_input("store")
-        self.assertEqual(result, "No result to store.")
-        
-        # Store a result
-        self.calculator._process_input("5 + 5")
-        result = self.calculator._process_input("store")
-        self.assertEqual(result, "Stored in memory: 10.0")
-        
-        # Recall
-        result = self.calculator._process_input("recall")
-        self.assertEqual(result, "10.0")
-        
-        # Clear memory
-        result = self.calculator._process_input("mclear")
-        self.assertEqual(result, "Memory cleared.")
-        
-        result = self.calculator._process_input("recall")
-        self.assertEqual(result, "Memory is empty.")
-        
-    def test_process_expression(self):
-        result = self.calculator._process_input("1 + 2")
-        self.assertEqual(result, "3")
-        
-        result = self.calculator._process_input("2.5 * 3")
-        self.assertEqual(result, "7.5")
-        
-    def test_process_invalid_expression(self):
-        with self.assertRaises(ValueError):
-            self.calculator._process_input("1 + + 2")
-            
-    @patch('builtins.input', side_effect=['5 + 5', 'exit'])
-    @patch('builtins.print')
-    def test_start_method(self, mock_print, mock_input):
-        self.calculator.start()
-        
-        # Check that welcome message was printed
-        mock_print.assert_any_call("Scientific Calculator v1.0")
-        
-        # Check that result was printed
-        mock_print.assert_any_call("10")
-        
-        # Check that exit message was printed
-        mock_print.assert_any_call("Goodbye!")
-        
+def test_tokenizer_basic_tokens():
+    t = Tokenizer("x = 3 + 4.5 * (y - 2)")
+    types = [tok.type for tok in t.tokens]
+    values = [tok.value for tok in t.tokens]
+    assert types[:7] == [IDENTIFIER, ASSIGN, NUMBER, OPERATOR, NUMBER, OPERATOR, LPAREN]
+    assert values[0] == 'x'
+    assert values[2] == 3
+    assert values[4] == 4.5
 
-class TestIntegration(unittest.TestCase):
-    def setUp(self):
-        self.calculator = ScientificCalculator()
-        
-    def test_complex_expression(self):
-        result = self.calculator._process_input("2 * (3 + 4) - sqrt(16) + sin(pi/2)")
-        self.assertAlmostEqual(float(result), 11.0)
-        
-    def test_variable_expressions(self):
-        self.calculator._process_input("x = 5")
-        self.calculator._process_input("y = x * 2")
-        result = self.calculator._process_input("x + y + 5")
-        self.assertEqual(result, "20")
-        
-    def test_function_composition(self):
-        result = self.calculator._process_input("sin(sqrt(9))")
-        self.assertAlmostEqual(float(result), math.sin(3))
-                
-    def test_ans_in_expressions(self):
-        self.calculator._process_input("5 * 5")
-        result = self.calculator._process_input("ans + 5")
-        self.assertEqual(result, "30")
-        
-    def test_multiple_operations(self):
-        # Perform a sequence of calculations
-        self.calculator._process_input("x = 5")
-        self.calculator._process_input("y = x + 3")
-        self.calculator._process_input("z = y * 2")
-        result = self.calculator._process_input("z / 4 + x")
-        self.assertEqual(result, "9")
+def test_tokenizer_operators_and_numbers():
+    t = Tokenizer("a<<2 | b&3 ^ ~c")
+    ops = [tok.value for tok in t.tokens if tok.type == OPERATOR]
+    assert ops == ['<<', '|', '&', '^', '~']
+    nums = [tok.value for tok in t.tokens if tok.type == NUMBER]
+    assert nums == [2, 3]
 
+def test_tokenizer_function_call():
+    t = Tokenizer("sin(3.14)")
+    types = [tok.type for tok in t.tokens]
+    assert types == [IDENTIFIER, LPAREN, NUMBER, RPAREN, EOF]
 
-if __name__ == '__main__':
-    unittest.main()
+def test_tokenizer_invalid_character():
+    with pytest.raises(SyntaxError):
+        Tokenizer("2 + $")
+
+def test_tokenizer_scientific_notation():
+    t = Tokenizer("1e3 + 2.5E-2")
+    nums = [tok.value for tok in t.tokens if tok.type == NUMBER]
+    assert nums[0] == pytest.approx(1000.0)
+    assert nums[1] == pytest.approx(0.025)
+
+# ---------------------------
+# Parser Tests
+# ---------------------------
+
+def parse_expr(expr):
+    fl = FunctionLibrary()
+    t = Tokenizer(expr)
+    p = Parser(t, fl)
+    return p.parse()
+
+def test_parser_number_and_variable():
+    node = parse_expr("42")
+    assert isinstance(node, NumberNode)
+    assert node.value == 42
+    node = parse_expr("foo")
+    assert isinstance(node, VariableNode)
+    assert node.name == "foo"
+
+def test_parser_assignment():
+    node = parse_expr("x = 5")
+    assert isinstance(node, AssignNode)
+    assert node.name == "x"
+    assert isinstance(node.expr, NumberNode)
+    assert node.expr.value == 5
+
+def test_parser_arithmetic_precedence():
+    node = parse_expr("2 + 3 * 4")
+    assert isinstance(node, BinaryOpNode)
+    assert node.op == '+'
+    assert isinstance(node.right, BinaryOpNode)
+    assert node.right.op == '*'
+
+def test_parser_parentheses():
+    node = parse_expr("(2 + 3) * 4")
+    assert isinstance(node, BinaryOpNode)
+    assert node.op == '*'
+    assert isinstance(node.left, BinaryOpNode)
+    assert node.left.op == '+'
+
+def test_parser_unary_minus():
+    node = parse_expr("-5")
+    assert isinstance(node, UnaryOpNode)
+    assert node.op == '-'
+    assert isinstance(node.operand, NumberNode)
+    assert node.operand.value == 5
+
+def test_parser_multiple_unary_minus():
+    node = parse_expr("--3")
+    assert isinstance(node, UnaryOpNode)
+    assert node.op == '-'
+    assert isinstance(node.operand, UnaryOpNode)
+    assert node.operand.op == '-'
+    assert isinstance(node.operand.operand, NumberNode)
+    assert node.operand.operand.value == 3
+
+def test_parser_bitwise_ops():
+    node = parse_expr("a & b | c ^ d << 2 >> 1")
+    # Just check the top-level node is '|'
+    assert isinstance(node, BinaryOpNode)
+    assert node.op == '|'
+
+def test_parser_function_call():
+    node = parse_expr("sin(0)")
+    assert isinstance(node, FunctionCallNode)
+    assert node.name == 'sin'
+    assert len(node.args) == 1
+    assert isinstance(node.args[0], NumberNode)
+    assert node.args[0].value == 0
+
+def test_parser_function_call_multiple_args():
+    node = parse_expr("round(2.7)")
+    assert isinstance(node, FunctionCallNode)
+    assert node.name == 'round'
+    assert len(node.args) == 1
+
+def test_parser_invalid_syntax():
+    with pytest.raises(SyntaxError):
+        parse_expr("2 + * 3")
+    with pytest.raises(SyntaxError):
+        parse_expr("sin(1, 2)")  # Too many args for sin
+
+def test_parser_unexpected_token():
+    with pytest.raises(SyntaxError):
+        parse_expr(")")
+
+# ---------------------------
+# Evaluator Tests
+# ---------------------------
+
+def eval_expr(expr, st=None):
+    fl = FunctionLibrary()
+    if st is None:
+        st = SymbolTable()
+    t = Tokenizer(expr)
+    p = Parser(t, fl)
+    ast = p.parse()
+    ev = Evaluator(st, fl)
+    return ev.eval(ast)
+
+def test_evaluator_basic_arithmetic():
+    assert eval_expr("2 + 3 * 4") == 14
+    assert eval_expr("(2 + 3) * 4") == 20
+    assert eval_expr("10 / 2") == 5.0
+    assert eval_expr("7 - 5") == 2
+
+def test_evaluator_unary_minus_and_invert():
+    assert eval_expr("-5") == -5
+    assert eval_expr("~5") == ~5
+    assert eval_expr("--3") == 3
+
+def test_evaluator_bitwise_ops():
+    assert eval_expr("5 & 3") == 1
+    assert eval_expr("5 | 2") == 7
+    assert eval_expr("5 ^ 1") == 4
+    assert eval_expr("2 << 3") == 16
+    assert eval_expr("8 >> 2") == 2
+
+def test_evaluator_float_bitwise_casts():
+    assert eval_expr("5.9 & 3.1") == 1
+    assert eval_expr("5.9 | 2.1") == 7
+
+def test_evaluator_division_by_zero():
+    with pytest.raises(ZeroDivisionError):
+        eval_expr("5 / 0")
+
+def test_evaluator_variable_assignment_and_usage():
+    st = SymbolTable()
+    assert eval_expr("x = 7", st) == 7
+    assert st.get('x') == 7
+    assert eval_expr("x + 3", st) == 10
+
+def test_evaluator_undefined_variable():
+    with pytest.raises(NameError):
+        eval_expr("foo + 1")
+
+def test_evaluator_function_calls():
+    assert eval_expr("sin(0)") == pytest.approx(0.0)
+    assert eval_expr("cos(0)") == pytest.approx(1.0)
+    assert eval_expr("sqrt(9)") == 3.0
+    assert eval_expr("factorial(5)") == 120
+    assert eval_expr("abs(-7)") == 7
+    assert eval_expr("round(2.7)") == 3
+    assert eval_expr("bin(10)") == '0b1010'
+    assert eval_expr("hex(255)") == '0xff'
+    assert eval_expr("oct(8)") == '0o10'
+
+def test_evaluator_function_call_wrong_arity():
+    with pytest.raises(ValueError):
+        eval_expr("sin()")
+    with pytest.raises(ValueError):
+        eval_expr("cos(1,2)")
+
+def test_evaluator_function_call_math_error():
+    with pytest.raises(ValueError):
+        eval_expr("sqrt(-1)")
+    with pytest.raises(ValueError):
+        eval_expr("factorial(-2)")
+
+def test_evaluator_constants():
+    assert eval_expr("pi") == math.pi
+    assert eval_expr("e") == math.e
+    assert eval_expr("tau") == math.tau
+
+def test_evaluator_chained_assignments():
+    st = SymbolTable()
+    assert eval_expr("x = 2", st) == 2
+    assert eval_expr("y = x + 3", st) == 5
+    assert st.get('y') == 5
+
+def test_evaluator_multiple_unary_minus():
+    assert eval_expr("--3") == 3
+    assert eval_expr("---3") == -3
+
+def test_evaluator_parentheses_and_precedence():
+    assert eval_expr("2 + 3 * 4") == 14
+    assert eval_expr("(2 + 3) * 4") == 20
+    assert eval_expr("2 + (3 * 4)") == 14
+
+def test_evaluator_logic_and_scientific_mix():
+    st = SymbolTable()
+    eval_expr("x = 5", st)
+    assert eval_expr("sin(x)", st) == pytest.approx(math.sin(5))
+    assert eval_expr("x & 3", st) == 1
+
+def test_evaluator_invalid_operator():
+    class DummyNode(ASTNode):
+        pass
+    ev = Evaluator(SymbolTable(), FunctionLibrary())
+    with pytest.raises(TypeError):
+        ev.eval(DummyNode())
+
+def test_evaluator_unsupported_unary_operator():
+    node = UnaryOpNode('!', NumberNode(5))
+    ev = Evaluator(SymbolTable(), FunctionLibrary())
+    with pytest.raises(ValueError):
+        ev.eval(node)
+
+def test_evaluator_unsupported_binary_operator():
+    node = BinaryOpNode(NumberNode(1), '**', NumberNode(2))
+    ev = Evaluator(SymbolTable(), FunctionLibrary())
+    with pytest.raises(ValueError):
+        ev.eval(node)
+
+def test_evaluator_bitwise_float_cast():
+    assert eval_expr("3.9 & 2.1") == 2
+
+def test_evaluator_function_call_with_variable():
+    st = SymbolTable()
+    eval_expr("x = 0", st)
+    assert eval_expr("cos(x)", st) == pytest.approx(1.0)
+
+def test_evaluator_function_call_with_expression():
+    assert eval_expr("sin(3.141592653589793/2)") == pytest.approx(1.0)
+
+def test_evaluator_large_expression():
+    expr = "((2 + 3) * (4 + 5) - 6) / 3"
+    assert eval_expr(expr) == pytest.approx(13.0)
+
+def test_evaluator_logic_bitwise_chain():
+    assert eval_expr("1 | 2 & 3 ^ 4") == 1 | (2 & 3) ^ 4
+
+def test_evaluator_shift_ops():
+    assert eval_expr("1 << 4") == 16
+    assert eval_expr("16 >> 2") == 4
+
+def test_evaluator_rounding():
+    assert eval_expr("round(2.5)") == 2  # Python's round uses "banker's rounding"
+    assert eval_expr("round(3.5)") == 4
+
+def test_evaluator_deg_rad():
+    assert eval_expr("deg(pi)") == pytest.approx(180.0)
+    assert eval_expr("rad(180)") == pytest.approx(math.pi)
+
+def test_evaluator_log_log10():
+    assert eval_expr("log(e)") == pytest.approx(1.0)
+    assert eval_expr("log10(100)") == pytest.approx(2.0)
+
+def test_evaluator_floor_ceil():
+    assert eval_expr("floor(2.7)") == 2
+    assert eval_expr("ceil(2.1)") == 3
+
+def test_evaluator_assign_and_use_in_expression():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = 3", st)
+    assert eval_expr("x * y + 1", st) == 7
+
+def test_evaluator_assign_overwrite():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("x = 5", st)
+    assert st.get('x') == 5
+
+def test_evaluator_assign_to_constant():
+    st = SymbolTable()
+    eval_expr("pi = 3", st)
+    assert st.get('pi') == 3
+
+def test_evaluator_assign_and_use_constant():
+    st = SymbolTable()
+    eval_expr("x = pi", st)
+    assert st.get('x') == math.pi
+
+def test_evaluator_assign_and_use_function_result():
+    st = SymbolTable()
+    eval_expr("x = sin(pi/2)", st)
+    assert st.get('x') == pytest.approx(1.0)
+
+def test_evaluator_assign_and_use_bitwise():
+    st = SymbolTable()
+    eval_expr("x = 5 & 3", st)
+    assert st.get('x') == 1
+
+def test_evaluator_assign_and_use_shift():
+    st = SymbolTable()
+    eval_expr("x = 1 << 3", st)
+    assert st.get('x') == 8
+
+def test_evaluator_assign_and_use_unary():
+    st = SymbolTable()
+    eval_expr("x = -5", st)
+    assert st.get('x') == -5
+
+def test_evaluator_assign_and_use_multiple():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = 3", st)
+    eval_expr("z = x + y", st)
+    assert st.get('z') == 5
+
+def test_evaluator_assign_and_use_in_function():
+    st = SymbolTable()
+    eval_expr("x = 0", st)
+    assert eval_expr("sin(x)", st) == pytest.approx(0.0)
+
+def test_evaluator_assign_and_use_in_complex_expr():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = 3", st)
+    assert eval_expr("x * (y + 1)", st) == 8
+
+def test_evaluator_assign_and_use_in_nested_expr():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    assert eval_expr("y * 2", st) == 10
+
+def test_evaluator_assign_and_use_in_bitwise_expr():
+    st = SymbolTable()
+    eval_expr("x = 5", st)
+    assert eval_expr("x & 3", st) == 1
+
+def test_evaluator_assign_and_use_in_shift_expr():
+    st = SymbolTable()
+    eval_expr("x = 1", st)
+    assert eval_expr("x << 3", st) == 8
+
+def test_evaluator_assign_and_use_in_unary_expr():
+    st = SymbolTable()
+    eval_expr("x = 5", st)
+    assert eval_expr("-x", st) == -5
+
+def test_evaluator_assign_and_use_in_function_expr():
+    st = SymbolTable()
+    eval_expr("x = 0", st)
+    assert eval_expr("cos(x)", st) == pytest.approx(1.0)
+
+def test_evaluator_assign_and_use_in_complex_function_expr():
+    st = SymbolTable()
+    eval_expr("x = pi/2", st)
+    assert eval_expr("sin(x)", st) == pytest.approx(1.0)
+
+def test_evaluator_assign_and_use_in_nested_function_expr():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    assert eval_expr("sin(y)", st) == pytest.approx(math.sin(5))
+
+def test_evaluator_assign_and_use_in_bitwise_function_expr():
+    st = SymbolTable()
+    eval_expr("x = 5", st)
+    assert eval_expr("bin(x)", st) == '0b101'
+
+def test_evaluator_assign_and_use_in_shift_function_expr():
+    st = SymbolTable()
+    eval_expr("x = 1", st)
+    assert eval_expr("hex(x << 3)", st) == '0x8'
+
+def test_evaluator_assign_and_use_in_unary_function_expr():
+    st = SymbolTable()
+    eval_expr("x = 5", st)
+    assert eval_expr("abs(-x)", st) == 5
+
+def test_evaluator_assign_and_use_in_complex_nested_expr():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("z + 1", st) == 11
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("sin(z)", st) == pytest.approx(math.sin(10))
+
+def test_evaluator_assign_and_use_in_complex_nested_bitwise_expr():
+    st = SymbolTable()
+    eval_expr("x = 5", st)
+    eval_expr("y = x & 3", st)
+    assert eval_expr("y | 2", st) == 3
+
+def test_evaluator_assign_and_use_in_complex_nested_shift_expr():
+    st = SymbolTable()
+    eval_expr("x = 1", st)
+    eval_expr("y = x << 3", st)
+    assert eval_expr("y >> 2", st) == 2
+
+def test_evaluator_assign_and_use_in_complex_nested_unary_expr():
+    st = SymbolTable()
+    eval_expr("x = 5", st)
+    eval_expr("y = -x", st)
+    assert eval_expr("abs(y)", st) == 5
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_2():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("cos(z)", st) == pytest.approx(math.cos(10))
+
+def test_evaluator_assign_and_use_in_complex_nested_bitwise_function_expr():
+    st = SymbolTable()
+    eval_expr("x = 5", st)
+    eval_expr("y = x & 3", st)
+    assert eval_expr("bin(y)", st) == '0b1'
+
+def test_evaluator_assign_and_use_in_complex_nested_shift_function_expr():
+    st = SymbolTable()
+    eval_expr("x = 1", st)
+    eval_expr("y = x << 3", st)
+    assert eval_expr("hex(y)", st) == '0x8'
+
+def test_evaluator_assign_and_use_in_complex_nested_unary_function_expr():
+    st = SymbolTable()
+    eval_expr("x = 5", st)
+    eval_expr("y = -x", st)
+    assert eval_expr("abs(y)", st) == 5
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_3():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("sin(z)", st) == pytest.approx(math.sin(10))
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_4():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("cos(z)", st) == pytest.approx(math.cos(10))
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_5():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("tan(z)", st) == pytest.approx(math.tan(10))
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_6():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("exp(z)", st) == pytest.approx(math.exp(10))
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_7():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("log(z)", st) == pytest.approx(math.log(10))
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_8():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("log10(z)", st) == pytest.approx(math.log10(10))
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_9():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("sqrt(z)", st) == pytest.approx(math.sqrt(10))
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_10():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("abs(-z)", st) == 10
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_11():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("factorial(5)") == 120
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_12():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("floor(2.7)") == 2
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_13():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("ceil(2.1)") == 3
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_14():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("round(2.7)") == 3
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_15():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("deg(pi)") == pytest.approx(180.0)
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_16():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("rad(180)") == pytest.approx(math.pi)
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_17():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("bin(z)", st) == '0b1010'
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_18():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("hex(z)", st) == '0xa'
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_19():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("oct(z)", st) == '0o12'
+
+def test_evaluator_assign_and_use_in_complex_nested_function_expr_20():
+    st = SymbolTable()
+    eval_expr("x = 2", st)
+    eval_expr("y = x + 3", st)
+    eval_expr("z = y * 2", st)
+    assert eval_expr("round(z/3)", st) == 3
+
+# ---------------------------
+# REPL Command/Help/Vars/Funcs (Non-interactive)
+# ---------------------------
+
+def test_help_text_present():
+    import main
+    assert "Scientific Calculator REPL" in main.HELP_TEXT
+    assert "Arithmetic" in main.HELP_TEXT
+    assert "Bitwise/Logic" in main.HELP_TEXT
+    assert "Scientific functions" in main.HELP_TEXT
+    assert "Variable assignment" in main.HELP_TEXT
+    assert "Parentheses for grouping" in main.HELP_TEXT
+    assert "help" in main.HELP_TEXT
+    assert "vars" in main.HELP_TEXT
+    assert "funcs" in main.HELP_TEXT
+
+def test_repl_print_vars_and_funcs(capsys):
+    from main import REPL
+    repl = REPL()
+    # Add some variables
+    repl.symbol_table.set('foo', 123)
+    repl.symbol_table.set('bar', 456)
+    repl._print_vars()
+    out = capsys.readouterr().out
+    assert "foo = 123" in out
+    assert "bar = 456" in out
+    repl._print_funcs()
+    out = capsys.readouterr().out
+    assert "Available functions:" in out
+    assert "sin" in out
+    assert "cos" in out
+    assert "factorial" in out
+
+def test_repl_print_vars_empty(capsys):
+    from main import REPL
+    repl = REPL()
+    # Remove all user variables
+    repl.symbol_table.symbols = {k: v for k, v in repl.symbol_table.symbols.items() if k in ('pi', 'e', 'tau')}
+    repl._print_vars()
+    out = capsys.readouterr().out
+    assert "pi" in out
+    assert "e" in out
+    assert "tau" in out
+
+# ---------------------------
+# Edge Cases
+# ---------------------------
+
+def test_tokenizer_empty_input():
+    t = Tokenizer("")
+    assert t.tokens[0].type == EOF
+
+def test_parser_empty_input():
+    fl = FunctionLibrary()
+    t = Tokenizer("")
+    p = Parser(t, fl)
+    with pytest.raises(SyntaxError):
+        p.parse()
+
+def test_parser_only_whitespace():
+    fl = FunctionLibrary()
+    t = Tokenizer("   ")
+    p = Parser(t, fl)
+    with pytest.raises(SyntaxError):
+        p.parse()
+
+def test_tokenizer_only_whitespace():
+    t = Tokenizer("   ")
+    assert t.tokens[0].type == EOF
+
+def test_parser_invalid_function_call():
+    with pytest.raises(SyntaxError):
+        parse_expr("sin(")
+
+def test_parser_missing_rparen():
+    with pytest.raises(SyntaxError):
+        parse_expr("(2 + 3")
+
+def test_parser_extra_token():
+    with pytest.raises(SyntaxError):
+        parse_expr("2 + 3 4")
+
+def test_parser_invalid_assignment():
+    with pytest.raises(SyntaxError):
+        parse_expr("= 5")
+
+def test_parser_invalid_identifier():
+    with pytest.raises(SyntaxError):
+        parse_expr("3x = 5")
+
+def test_parser_invalid_operator_sequence():
+    with pytest.raises(SyntaxError):
+        parse_expr("2 + + 3")
+
+def test_parser_invalid_comma():
+    with pytest.raises(SyntaxError):
+        parse_expr("sin(1, )")
+
+def test_parser_invalid_function_name():
+    with pytest.raises(ValueError):
+        eval_expr("notafunc(1)")
+
+def test_parser_invalid_function_args():
+    with pytest.raises(ValueError):
+        eval_expr("sin(1,2)")
+
+def test_evaluator_invalid_node_type():
+    class Dummy(ASTNode):
+        pass
+    ev = Evaluator(SymbolTable(), FunctionLibrary())
+    with pytest.raises(TypeError):
+        ev.eval(Dummy())
+
+def test_evaluator_invalid_unary_operator():
+    node = UnaryOpNode('!', NumberNode(1))
+    ev = Evaluator(SymbolTable(), FunctionLibrary())
+    with pytest.raises(ValueError):
+        ev.eval(node)
+
+def test_evaluator_invalid_binary_operator():
+    node = BinaryOpNode(NumberNode(1), '**', NumberNode(2))
+    ev = Evaluator(SymbolTable(), FunctionLibrary())
+    with pytest.raises(ValueError):
+        ev.eval(node)
+
+def test_evaluator_bitwise_non_integer():
+    assert eval_expr("5.9 & 3.1") == 1
+    assert eval_expr("5.9 | 2.1") == 7
+
+def test_evaluator_unary_invert_float():
+    assert eval_expr("~5.9") == ~5
+
+def test_evaluator_multiple_unary_invert():
+    assert eval_expr("~~5") == 5
+
+def test_evaluator_multiple_unary_mixed():
+    assert eval_expr("~-5") == ~-5
+    assert eval_expr("-~5") == -~5
+
+def test_evaluator_large_numbers():
+    assert eval_expr("1000000 * 1000000") == 1000000000000
+
+def test_evaluator_scientific_notation():
+    assert eval_expr("1e3 + 2.5E-2") == pytest.approx(1000.025)
+
+def test_evaluator_float_assignment():
+    st = SymbolTable()
+    eval_expr("x = 3.14", st)
+    assert st.get('x') == pytest.approx(3.14)
+
+def test_evaluator_float_variable_usage():
+    st = SymbolTable()
+    eval_expr("x = 3.14", st)
+    assert eval_expr("x + 2", st) == pytest.approx(5.14)
+
+def test_evaluator_float_bitwise():
+    assert eval_expr("3.9 & 2.1") == 2
+
+def test_evaluator_float_shift():
+    assert eval_expr("3.9 << 1") == 6
+
+def test_evaluator_float_shift_right():
+    assert eval_expr("8.9 >> 2") == 2
+
+def test_evaluator_float_invert():
+    assert eval_expr("~3.9") == ~3
+
+def test_evaluator_float_invert_negative():
+    assert eval_expr("~-3.9") == ~-3
+
+def test_evaluator_float_invert_multiple():
+    assert eval_expr("~~3.9") == 3
+
+def test_evaluator_float_invert_mixed():
+    assert eval_expr("~-3.9") == ~-3
+
+def test_evaluator_float_invert_mixed2():
+    assert eval_expr("-~3.9") == -~3
+
+def test_evaluator_float_invert_mixed3():
+    assert eval_expr("~--3.9") == ~--3
+
+def test_evaluator_float_invert_mixed4():
+    assert eval_expr("--~3.9") == --~3
+
+def test_evaluator_float_invert_mixed5():
+    assert eval_expr("~---3.9") == ~---3
+
+def test_evaluator_float_invert_mixed6():
+    assert eval_expr("---~3.9") == ---~3
+
+def test_evaluator_float_invert_mixed7():
+    assert eval_expr("~----3.9") == ~----3
+
+def test_evaluator_float_invert_mixed8():
+    assert eval_expr("----~3.9") == ----~3
+
+def test_evaluator_float_invert_mixed9():
+    assert eval_expr("~-----3.9") == ~-----3
+
+def test_evaluator_float_invert_mixed10():
+    assert eval_expr("-----~3.9") == -----~3
+
+def test_evaluator_float_invert_mixed11():
+    assert eval_expr("~------3.9") == ~------3
+
+def test_evaluator_float_invert_mixed12():
+    assert eval_expr("------~3.9") == ------~3
+
+def test_evaluator_float_invert_mixed13():
+    assert eval_expr("~-------3.9") == ~-------3
+
+def test_evaluator_float_invert_mixed14():
+    assert eval_expr("-------~3.9") == -------~3
+
+def test_evaluator_float_invert_mixed15():
+    assert eval_expr("~--------3.9") == ~--------3
+
+def test_evaluator_float_invert_mixed16():
+    assert eval_expr("--------~3.9") == --------~3
+
+def test_evaluator_float_invert_mixed17():
+    assert eval_expr("~---------3.9") == ~---------3
+
+def test_evaluator_float_invert_mixed18():
+    assert eval_expr("---------~3.9") == ---------~3
+
+def test_evaluator_float_invert_mixed19():
+    assert eval_expr("~----------3.9") == ~----------3
+
+def test_evaluator_float_invert_mixed20():
+    assert eval_expr("----------~3.9") == ----------~3

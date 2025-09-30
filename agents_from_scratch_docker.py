@@ -178,9 +178,10 @@ IMPORTANT:
 
 class TestEngineerAgent(Agent):
     """Agent specialized in testing and evaluating Python code implementations."""
-    
-    def __init__(self,model: str, temperature: float = 0):
-        system_prompt = """You are an expert Python test engineer. Your job is to analyze, compile, and test Python code implementations.
+
+    def __init__(self,model: str, temperature: float = 0, pass_threshold: float = 80.0):
+        self.pass_threshold = pass_threshold
+        system_prompt = f"""You are an expert Python test engineer. Your job is to analyze, compile, and test Python code implementations.
 
 Your responsibilities include:
 1. Evaluating if the code compiles correctly
@@ -194,30 +195,34 @@ You will receive actual test results from a Docker sandbox environment where the
 Use these results to provide an accurate assessment and specific suggestions for improvement.
 
 Your response MUST be a JSON object with the following structure:
-{
-    "passed": boolean,  // Whether the code compiles and passes basic functionality tests
-    "results": {
+{{{{
+    "passed": boolean,  // Whether the code meets the {pass_threshold}% pass threshold and compiles successfully
+    "results": {{{{
         "compilation_success": boolean,  // Whether the code compiles without syntax errors
         "test_results": [
-            {
+            {{{{
                 "test_name": string,
                 "passed": boolean,
                 "description": string  // Description of the test and what it verifies
-            }
+            }}}}
         ],
         "issues": [
-            {
+            {{{{
                 "type": string,  // "syntax", "logical", "performance", "security", etc.
                 "severity": string,  // "critical", "major", "minor", "suggestion"
                 "description": string,
                 "location": string,  // The function, class, or line where the issue occurs
                 "fix_suggestion": string  // Specific code or approach to fix the issue
-            }
+            }}}}
         ],
         "test_coverage": string,  // Percentage of code covered by tests
-        "overall_assessment": string  // General assessment of the code quality and functionality
-    }
-}"""
+        "overall_assessment": string,  // General assessment of the code quality and functionality
+        "pass_percentage": number,  // Percentage of tests that passed (0-100)
+        "passed_count": number,  // Number of tests that passed
+        "failed_count": number,  // Number of tests that failed
+        "total_count": number  // Total number of tests run
+    }}}}
+}}}}"""
         
         super().__init__("Test Engineer", system_prompt,model=model,temperature=temperature)
         
@@ -564,8 +569,8 @@ def pytest_runtest_makereport(item, call):
                     pass_percentage = (passed_count / total_count) * 100
                     print(f"📊 Test Results: {passed_count}/{total_count} passed ({pass_percentage:.1f}%)")
 
-                    # 80% passing grade threshold
-                    meets_threshold = pass_percentage >= 80.0
+                    # Use configurable passing grade threshold
+                    meets_threshold = pass_percentage >= self.pass_threshold
                 else:
                     meets_threshold = result.returncode == 0  # Fallback to exit code
                     pass_percentage = 100.0 if meets_threshold else 0.0
@@ -574,9 +579,9 @@ def pytest_runtest_makereport(item, call):
                 if result.returncode == 0:
                     print("✓ All tests passed!")
                 elif meets_threshold:
-                    print(f"✓ Passing grade achieved ({pass_percentage:.1f}% ≥ 80%)")
+                    print(f"✓ Passing grade achieved ({pass_percentage:.1f}% ≥ {self.pass_threshold}%)")
                 else:
-                    print(f"✗ Below passing grade ({pass_percentage:.1f}% < 80%)")
+                    print(f"✗ Below passing grade ({pass_percentage:.1f}% < {self.pass_threshold}%)")
                     # Extract and show failure summary
                     for i, line in enumerate(lines):
                         if 'FAILED' in line or 'ERROR' in line:
@@ -627,7 +632,7 @@ def pytest_runtest_makereport(item, call):
 
         # Add test results summary with pass percentage
         if total_count > 0:
-            status = "PASS (≥80%)" if pass_percentage >= 80.0 else "FAIL (<80%)"
+            status = f"PASS (≥{self.pass_threshold}%)" if pass_percentage >= self.pass_threshold else f"FAIL (<{self.pass_threshold}%)"
             compressed.append(f"📊 Test Results: {passed_count}/{total_count} passed ({pass_percentage:.1f}%) - {status}")
 
         # Add return code status
@@ -688,13 +693,14 @@ def pytest_runtest_makereport(item, call):
 class AgenticFlow:
     """Manages the flow of information between agents."""
 
-    def __init__(self, model: str, max_iterations=3, temperature=0):
+    def __init__(self, model: str, max_iterations=3, temperature=0, pass_threshold=80.0):
         self.architect = ArchitectAgent(model=model, temperature=temperature)
         self.software_engineer = SoftwareEngineerAgent(model=model, temperature=temperature)
-        self.test_engineer = TestEngineerAgent(model=model, temperature=temperature)
+        self.test_engineer = TestEngineerAgent(model=model, temperature=temperature, pass_threshold=pass_threshold)
         self.max_iterations = max_iterations
         self.temperature = temperature
         self.model = model
+        self.pass_threshold = pass_threshold
         self.results = {
             "architecture_plan": None,
             "implementation_history": [],
@@ -875,6 +881,7 @@ Include proper error handling, documentation, and follow best practices for Pyth
 
         while iteration <= self.max_iterations:
             print(f"\n🧪 Starting Test Engineer Agent (Iteration {iteration})...")
+            print(f"   Pass threshold: {self.pass_threshold}%")
 
             # Extract just the code from the implementation (remove markdown if present)
             implementation_code = self._extract_code_from_response(implementation)
@@ -903,8 +910,13 @@ Provide a comprehensive test report including compilation status, test results, 
                 test_report = json.loads(test_report_str)
                 self.results["test_reports"].append(test_report)
                 
-                if test_report.get("passed", False):
-                    print(f"✅ Tests passed! Implementation successful after {iteration} iteration(s).")
+                # Check if we meet the configured threshold for passing
+                results = test_report.get("results", {})
+                pass_percentage = results.get("pass_percentage", 0.0)
+                meets_threshold = pass_percentage >= self.pass_threshold
+
+                if meets_threshold:
+                    print(f"✅ Tests passed! Implementation successful after {iteration} iteration(s) ({pass_percentage:.1f}% ≥ {self.pass_threshold}%).")
                     success = True
                     break
 
@@ -1037,15 +1049,75 @@ Please provide a complete revised implementation that addresses all the issues m
         print(f"Results saved to {filename}")
 
 
+def check_docker_availability():
+    """Check if Docker is available and responsive before starting."""
+    import subprocess
+
+    print("🐳 Checking Docker availability...")
+
+    try:
+        # Check if Docker command exists
+        result = subprocess.run(
+            ["docker", "--version"],
+            check=True,
+            capture_output=True,
+            timeout=5,
+            text=True
+        )
+        print(f"✓ Docker found: {result.stdout.strip()}")
+    except FileNotFoundError:
+        print("❌ Docker command not found!")
+        print("   Please install Docker Desktop from https://www.docker.com/products/docker-desktop")
+        return False
+    except subprocess.TimeoutExpired:
+        print("❌ Docker is not responding (timeout after 5 seconds)")
+        print("   Please restart Docker Desktop and try again")
+        return False
+    except subprocess.SubprocessError as e:
+        print(f"❌ Error checking Docker: {e}")
+        return False
+
+    # Check if Docker daemon is running
+    try:
+        result = subprocess.run(
+            ["docker", "ps"],
+            check=True,
+            capture_output=True,
+            timeout=5,
+            text=True
+        )
+        print("✓ Docker daemon is running")
+        return True
+    except subprocess.TimeoutExpired:
+        print("❌ Docker daemon is not responding")
+        print("   Please start Docker Desktop and try again")
+        return False
+    except subprocess.CalledProcessError:
+        print("❌ Docker daemon is not accessible")
+        print("   Please start Docker Desktop and ensure it's running properly")
+        return False
+    except subprocess.SubprocessError as e:
+        print(f"❌ Error accessing Docker daemon: {e}")
+        return False
+
+
 # Example usage
-if __name__ == "__main__":    
+if __name__ == "__main__":
     print("🤖 Agentic Flow - Software Development System")
     print("--------------------------------------------")
-    
+
+    # Check Docker availability first
+    if not check_docker_availability():
+        print("\n⚠️  Cannot proceed without Docker. Please fix the Docker issue and try again.")
+        exit(1)
+
+    print()  # Add blank line for readability
+
     # Argument parser setup
     parser = argparse.ArgumentParser(description="Run the Agentic Flow system.")
     parser.add_argument('--description-file', type=str, help='Path to a file containing the problem description.')
     parser.add_argument('--max-iterations', type=int, default=2, help='Maximum number of test-fix iterations (default: 2).')
+    parser.add_argument('--pass-threshold', type=float, default=80.0, help='Minimum percentage of tests that must pass to succeed (default: 80.0).')
     args = parser.parse_args()
 
     # Setup correct client based on user input
@@ -1083,9 +1155,14 @@ if __name__ == "__main__":
             """
             print("\n✨ Using default example problem:\n")
             print(problem_description)
-    
+
+    # Display configuration
+    print("\n⚙️  Configuration:")
+    print(f"   Max iterations: {args.max_iterations}")
+    print(f"   Pass threshold: {args.pass_threshold}%")
+
     start_time = time.time()
-    flow = AgenticFlow(model=model,max_iterations=args.max_iterations,temperature=0)
+    flow = AgenticFlow(model=model, max_iterations=args.max_iterations, temperature=0, pass_threshold=args.pass_threshold)
     results = flow.run(problem_description)
     end_time = time.time()
     
@@ -1112,10 +1189,10 @@ if __name__ == "__main__":
                 passed = test_results.get("passed_count", 0)
                 total = test_results.get("total_count", 0)
                 print(f"📊 Final Test Results: {passed}/{total} passed ({pass_pct:.1f}%)")
-                if pass_pct >= 80.0:
-                    print(f"✓ Meets passing grade (≥80%)")
+                if pass_pct >= args.pass_threshold:
+                    print(f"✓ Meets passing grade (≥{args.pass_threshold}%)")
                 else:
-                    print(f"✗ Below passing grade (<80%)")
+                    print(f"✗ Below passing grade (<{args.pass_threshold}%)")
 
     print(f"\n⏱️ Total execution time: {end_time - start_time:.2f} seconds")
     
