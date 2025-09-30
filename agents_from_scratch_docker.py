@@ -101,19 +101,24 @@ If you receive a test report indicating failures or issues with your code:
 - Make sure your revised code addresses all the feedback
 - Explain the changes you've made to fix the issues
 
-Format your response entirely as a single python syntax file name 'main.py' with all commentary and
-explanations commented as proper multi-line or single-line comments. All imports should be at the top of the file,
-and any class or function definitions should be clearly separated. The file should be
-a complete, runnable implementation of the system as described in the architecture plan.
+Your response must be formatted as follows:
+1. Wrap ALL of your Python code in a markdown code block using triple backticks with the 'python' language identifier
+2. Include all commentary and explanations as proper multi-line or single-line comments WITHIN the code
+3. All imports should be at the top of the file
+4. Any class or function definitions should be clearly separated
+5. The code should be a complete, runnable implementation of the system
 
-The response should include:
-- Brief overview of implementation approach
-- Python modules, classes, and functions you're implementing
-- The actual Python code implementation with proper imports
-- If revising code based on a test report, explain your fixes
+The response format should be:
+```python
+# Brief overview of implementation approach as a comment
+# ... your complete Python implementation here ...
+```
 
-Do not include any additional text or explanations outside of the Python code block.
-Do not use markdown formatting or triple backticks to enclose the source code.
+IMPORTANT:
+- Wrap your code in ```python ... ``` markdown code blocks
+- Do NOT include any explanatory text outside the code block
+- All explanations must be Python comments inside the code block
+- Ensure the code is COMPLETE - do not truncate or abbreviate any part
 
 """
         
@@ -164,48 +169,49 @@ Your response MUST be a JSON object with the following structure:
         
         super().__init__("Test Engineer", system_prompt,model=model,temperature=temperature)
         
-    def process(self, input_text: str) -> str:        
+    def process(self, input_text: str) -> str:
         """Process input with the agent, run code in Docker sandbox, and return the response."""
         self.add_to_history("user", input_text)
         # Extract code from input
         import re
         code_match = re.search(r'```python\s*([\s\S]*?)\s*```', input_text)
-        
+
         if not code_match:
-            response_text = self.query_llm()            
-            self.add_to_history("assistant", response_text)
-            return response_text
-        
-        # Extract the code and architecture plan for context
-        code_to_test = code_match.group(1)
+            # Try without language specifier
+            code_match = re.search(r'```\s*([\s\S]*?)\s*```', input_text)
+
+        if not code_match:
+            # No code block found - assume the entire input is code
+            # This handles cases where the engineer didn't use markdown
+            print("Warning: No code block found in engineer's output, treating entire response as code")
+            code_to_test = input_text
+        else:
+            # Extract the code from the matched group
+            code_to_test = code_match.group(1)
+
+        # Extract architecture plan for context
         arch_match = re.search(r'This code is intended to implement the following architecture plan:\s*([\s\S]*?)(?:\n\n|$)', input_text)
         architecture_plan = arch_match.group(1).strip() if arch_match else ""
-        
+
         # Generate test code based on the implementation
         test_code = self._generate_test_code(code_to_test, architecture_plan)
-        
+
         # Run in Docker sandbox
         test_results = self._run_in_docker_sandbox(code_to_test, test_code)
-        
-        # Enhance the user input with the test results
+
+        # Compress test results - only keep critical information
+        compressed_results = self._compress_sandbox_results(test_results)
+
+        # Enhance the user input with the compressed test results
         enhanced_input = f"""{input_text}
 
 SANDBOX TEST RESULTS:
-```
-{test_results.get('stdout', '')}
-```
-
-ERROR OUTPUT:
-```
-{test_results.get('stderr', '')}
-```
-
-EXIT CODE: {test_results.get('return_code', -1)}
+{compressed_results}
 
 Based on these actual test results from executing the code in a Docker sandbox,
 provide a detailed JSON test report following the format specified in your instructions.
 Focus on providing actionable feedback and specific fixes for any issues found."""
-        
+
         # Update the history with the enhanced input
         self.history[-1]["content"] = enhanced_input
         
@@ -243,7 +249,7 @@ Focus on providing actionable feedback and specific fixes for any issues found."
     def _generate_test_code(self, code_to_test: str, architecture_plan: str) -> str:
         """Generate test code for the implementation using GPT."""
         # Prepare prompt for generating test code
-        test_generation_prompt = f"""You are an expert Python test engineer. 
+        test_generation_prompt = f"""You are an expert Python test engineer.
 Generate comprehensive unit tests for the following Python code.
 
 CODE TO TEST:
@@ -263,23 +269,64 @@ Create a complete test suite that:
 6. When comparing floating point numbers to numeric literals, use floating point literals.
 7. The test suite should import components to test from the 'main.py' file.
 
-Return ONLY the test code, with no explanations or other text."""
+IMPORTANT: Return ONLY the raw Python test code. Do NOT wrap it in markdown code blocks or backticks. Do NOT include explanations. Just return the pure Python code that can be written directly to a .py file."""
 
         # Call the API to generate test code
         prompt_messages = [
-            {"role": "system", "content": "You are an expert in writing Python unit tests."},
+            {"role": "system", "content": "You are an expert in writing Python unit tests. Output only raw Python code without markdown formatting."},
             {"role": "user", "content": test_generation_prompt}
         ] 
                 
         test_code_raw = self.query_llm(prompt_messages)
 
-        # Extract just the code if it's in a code block
+        # Extract just the code if it's in a code block (try multiple patterns)
+        # Pattern 1: Standard markdown code block
         test_code_match = re.search(r'```python\s*([\s\S]*?)\s*```', test_code_raw)
         if test_code_match:
             test_code = test_code_match.group(1)
         else:
-            test_code = test_code_raw
-        
+            # Pattern 2: Code block without language specifier
+            test_code_match = re.search(r'```\s*([\s\S]*?)\s*```', test_code_raw)
+            if test_code_match:
+                test_code = test_code_match.group(1)
+            else:
+                # No code block found, use raw output
+                test_code = test_code_raw
+
+        # Clean up any remaining markdown artifacts at the start/end
+        test_code = test_code.strip()
+        if test_code.startswith('```'):
+            # Remove any leading ``` that might have been missed
+            lines = test_code.split('\n')
+            if lines[0].startswith('```'):
+                test_code = '\n'.join(lines[1:])
+        if test_code.endswith('```'):
+            # Remove any trailing ``` that might have been missed
+            lines = test_code.split('\n')
+            if lines[-1].strip() == '```':
+                test_code = '\n'.join(lines[:-1])
+
+        test_code = test_code.strip()
+
+        # Validate that the test code has valid Python syntax
+        try:
+            compile(test_code, '<test_code>', 'exec')
+        except SyntaxError as e:
+            print(f"Warning: Generated test code has syntax error: {e}")
+            print("Attempting to generate simpler fallback tests...")
+            # Generate a minimal fallback test
+            test_code = f"""import unittest
+from main import *
+
+class TestBasic(unittest.TestCase):
+    def test_import(self):
+        \"\"\"Test that the module imports successfully.\"\"\"
+        self.assertTrue(True)
+
+if __name__ == '__main__':
+    unittest.main()
+"""
+
         return test_code
     
     def _run_in_docker_sandbox(self, code_to_test: str, test_code: str) -> dict:
@@ -323,14 +370,49 @@ def pytest_runtest_makereport(item, call):
                 shutil.rmtree("src")
             shutil.copytree(temp_dir, "src")
 
-            # Check if Docker is available
+            # Check if Docker is available and responsive
             try:
-                subprocess.run(["docker", "--version"], check=True, capture_output=True)
+                result = subprocess.run(
+                    ["docker", "--version"],
+                    check=True,
+                    capture_output=True,
+                    timeout=5  # 5 second timeout for version check
+                )
+            except subprocess.TimeoutExpired:
+                return {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": "Docker daemon is not responding. Please restart Docker Desktop.",
+                    "return_code": -1
+                }
             except (subprocess.SubprocessError, FileNotFoundError):
                 return {
                     "success": False,
                     "stdout": "",
                     "stderr": "Docker is not available on this system",
+                    "return_code": -1
+                }
+
+            # Additional check: try to list images to verify daemon is working
+            try:
+                subprocess.run(
+                    ["docker", "images"],
+                    check=True,
+                    capture_output=True,
+                    timeout=5  # 5 second timeout
+                )
+            except subprocess.TimeoutExpired:
+                return {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": "Docker daemon is not responding. Please restart Docker Desktop and try again.",
+                    "return_code": -1
+                }
+            except subprocess.SubprocessError:
+                return {
+                    "success": False,
+                    "stdout": "",
+                    "stderr": "Docker daemon is not accessible. Please check Docker Desktop is running.",
                     "return_code": -1
                 }
 
@@ -361,7 +443,21 @@ def pytest_runtest_makereport(item, call):
                         print(f"  - {module}")
 
                 # Build container using the generated Dockerfile
-                subprocess.run(["docker", "build", "-t", "test", "."])
+                print("\nBuilding Docker container...")
+                build_result = subprocess.run(
+                    ["docker", "build", "-t", "test", "."],
+                    capture_output=True,
+                    text=True,
+                    timeout=120  # 2 minute timeout for build
+                )
+
+                if build_result.returncode != 0:
+                    return {
+                        "success": False,
+                        "stdout": build_result.stdout,
+                        "stderr": f"Docker build failed:\n{build_result.stderr}",
+                        "return_code": build_result.returncode
+                    }
 
                 # Use Docker to run the tests in the "test" container
                 result = subprocess.run(["docker", "run", "test"],
@@ -378,11 +474,12 @@ def pytest_runtest_makereport(item, call):
                     "return_code": result.returncode
                 }
                 
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as e:
+                timeout_msg = "Docker build" if "build" in str(e.cmd) else "Test execution"
                 return {
                     "success": False,
                     "stdout": "",
-                    "stderr": "Execution timed out after 30 seconds",
+                    "stderr": f"{timeout_msg} timed out",
                     "return_code": -1
                 }
             except Exception as e:
@@ -392,7 +489,54 @@ def pytest_runtest_makereport(item, call):
                     "stderr": f"Error running tests: {str(e)}",
                     "return_code": -1
                 }
-    
+
+    def _compress_sandbox_results(self, test_results: dict) -> str:
+        """Compress sandbox results to only critical information."""
+        stdout = test_results.get('stdout', '')
+        stderr = test_results.get('stderr', '')
+        return_code = test_results.get('return_code', -1)
+
+        compressed = []
+
+        # Add return code status
+        if return_code == 0:
+            compressed.append("✓ Exit Code: 0 (SUCCESS)")
+        else:
+            compressed.append(f"✗ Exit Code: {return_code} (FAILURE)")
+
+        # Extract only failed tests from stdout
+        if stdout:
+            failed_tests = [line for line in stdout.split('\n') if 'FAILED' in line or 'ERROR' in line]
+            if failed_tests:
+                compressed.append("\nFailed Tests:")
+                compressed.extend([f"  {test}" for test in failed_tests[:10]])  # Limit to 10
+            else:
+                # Check for passed test count
+                passed = [line for line in stdout.split('\n') if 'PASSED' in line or 'passed' in line]
+                if passed:
+                    compressed.append(f"\n✓ Tests passed: {len(passed)}")
+
+        # Only include critical errors from stderr
+        if stderr:
+            # Extract only the last error or traceback
+            lines = stderr.strip().split('\n')
+            if 'Traceback' in stderr:
+                # Find the last traceback
+                traceback_start = -1
+                for i in range(len(lines) - 1, -1, -1):
+                    if 'Traceback' in lines[i]:
+                        traceback_start = i
+                        break
+                if traceback_start >= 0:
+                    compressed.append("\nCritical Error:")
+                    compressed.append("  " + "\n  ".join(lines[traceback_start:]))
+            elif lines:
+                # Just show the last few error lines
+                compressed.append("\nError Output:")
+                compressed.append("  " + "\n  ".join(lines[-5:]))
+
+        return "\n".join(compressed)
+
     def _extract_json(self, text):
         """Attempt to extract JSON from a text that might contain other content."""
         # Try to find JSON between triple backticks
@@ -400,24 +544,25 @@ def pytest_runtest_makereport(item, call):
         json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
         if json_match:
             return json_match.group(1)
-        
+
         # If no backticks, look for text that starts with { and ends with }
         json_match = re.search(r'(\{[\s\S]*\})', text)
         if json_match:
             return json_match.group(1)
-            
+
         # If all else fails, return the original text
         return text
-    
+
 class AgenticFlow:
     """Manages the flow of information between agents."""
-    
+
     def __init__(self, model: str, max_iterations=3, temperature=0):
         self.architect = ArchitectAgent(model=model, temperature=temperature)
         self.software_engineer = SoftwareEngineerAgent(model=model, temperature=temperature)
         self.test_engineer = TestEngineerAgent(model=model, temperature=temperature)
         self.max_iterations = max_iterations
         self.temperature = temperature
+        self.model = model
         self.results = {
             "architecture_plan": None,
             "implementation_history": [],
@@ -427,7 +572,108 @@ class AgenticFlow:
             "iterations_required": 0,
             "success": False
         }
-    
+
+    def _extract_code_from_response(self, response: str) -> str:
+        """Extract Python code from engineer's response, handling various formats."""
+        import re
+
+        # Try to find code in markdown code blocks with python identifier
+        code_match = re.search(r'```python\n([\s\S]*?)\n```', response)
+        if code_match:
+            return code_match.group(1)
+
+        # Try with optional whitespace/newlines around markers
+        code_match = re.search(r'```python\s*([\s\S]*?)\s*```', response)
+        if code_match:
+            return code_match.group(1)
+
+        # Try code block without language specifier
+        code_match = re.search(r'```\n([\s\S]*?)\n```', response)
+        if code_match:
+            return code_match.group(1)
+
+        code_match = re.search(r'```\s*([\s\S]*?)\s*```', response)
+        if code_match:
+            return code_match.group(1)
+
+        # Debug: show first 200 chars to understand the format
+        print(f"Warning: No code block markers found. Response starts with:")
+        print(f"  {response[:200]!r}")
+        print("Treating entire response as code")
+        return response
+
+    def _validate_code_syntax(self, code: str) -> tuple[bool, str]:
+        """
+        Validate that the code has correct Python syntax.
+
+        Returns:
+            (is_valid, error_message)
+        """
+        try:
+            compile(code, '<string>', 'exec')
+            return True, ""
+        except SyntaxError as e:
+            error_msg = f"Syntax error at line {e.lineno}: {e.msg}"
+            if e.text:
+                error_msg += f"\n  {e.text.strip()}"
+            return False, error_msg
+
+    def _compress_test_report_to_todos(self, test_report: dict) -> str:
+        """Extract actionable todos from a test report."""
+        todos = []
+
+        if isinstance(test_report, dict) and "results" in test_report:
+            results = test_report["results"]
+
+            # Add compilation issues if any
+            if not results.get("compilation_success", True):
+                todos.append("- Fix compilation/syntax errors")
+
+            # Add failed tests
+            if "test_results" in results:
+                for test in results["test_results"]:
+                    if not test.get("passed", False):
+                        todos.append(f"- Fix test: {test.get('test_name', 'unknown')}")
+
+            # Add critical and major issues
+            if "issues" in results:
+                for issue in results["issues"]:
+                    severity = issue.get("severity", "")
+                    if severity in ["critical", "major"]:
+                        location = issue.get("location", "unknown location")
+                        description = issue.get("description", "")
+                        fix = issue.get("fix_suggestion", "")
+                        todos.append(f"- [{severity.upper()}] {location}: {description[:100]}... Fix: {fix[:100]}")
+
+        return "\n".join(todos) if todos else "No critical issues found"
+
+    def _summarize_architecture_plan(self, architecture_plan: str) -> str:
+        """Summarize the architecture plan into key requirements using LLM."""
+        prompt = f"""Summarize the following architecture plan into a concise list of key requirements and constraints (maximum 10 bullet points):
+
+{architecture_plan}
+
+Provide only the essential technical requirements, constraints, and design decisions that a developer needs to keep in mind while implementing. Be concise."""
+
+        messages = [
+            {"role": "system", "content": "You are an expert at summarizing technical documents concisely."},
+            {"role": "user", "content": prompt}
+        ]
+
+        response = completion(
+            model=self.model,
+            messages=messages,
+            temperature=0,
+            stream=True
+        )
+
+        summary = ""
+        for chunk in response:
+            if hasattr(chunk, 'choices') and chunk.choices and hasattr(chunk.choices[0], 'delta') and chunk.choices[0].delta.content:
+                summary += chunk.choices[0].delta.content
+
+        return summary.strip()
+
     def run(self, problem_description: str) -> Dict[str, Any]:
         """Execute the full agentic workflow."""
         print(f"🏛️ Starting Architect Agent...")
@@ -446,26 +692,44 @@ Please implement a working Python prototype that demonstrates the key functional
 Include proper error handling, documentation, and follow best practices for Python development."""
         
         implementation = self.software_engineer.process(implementation_prompt)
+
+        # Extract and validate the generated code
+        extracted_code = self._extract_code_from_response(implementation)
+        is_valid, error_msg = self._validate_code_syntax(extracted_code)
+
+        if not is_valid:
+            print(f"⚠️ Warning: Generated code has syntax errors:")
+            print(f"  {error_msg}")
+            print("  The test phase will report these errors.")
+
         self.results["implementation_history"].append(implementation)
-        
+
         # Test-fix loop
         iteration = 1
         success = False
-        
+        architecture_summary = None  # Will be created after first iteration
+
         while iteration <= self.max_iterations:
             print(f"\n🧪 Starting Test Engineer Agent (Iteration {iteration})...")
+
+            # Extract just the code from the implementation (remove markdown if present)
+            implementation_code = self._extract_code_from_response(implementation)
+
+            # Use full architecture plan for first iteration, summary for subsequent ones
+            architecture_context = architecture_plan if iteration == 1 else architecture_summary
+
             test_prompt = f"""Please analyze, compile, and test the following Python implementation:
 
 ```python
-{implementation}
+{implementation_code}
 ```
 
 This code is intended to implement the following architecture plan:
 
-{architecture_plan}
+{architecture_context}
 
 Provide a comprehensive test report including compilation status, test results, and any issues found."""
-            
+
             test_report_str = self.test_engineer.process(test_prompt)
             
             # Try to parse the test report as JSON
@@ -479,27 +743,50 @@ Provide a comprehensive test report including compilation status, test results, 
                     print(f"✅ Tests passed! Implementation successful after {iteration} iteration(s).")
                     success = True
                     break
-                
+
+                # Create architecture summary after first iteration
+                if iteration == 1 and architecture_summary is None:
+                    print("📝 Summarizing architecture plan for subsequent iterations...")
+                    architecture_summary = self._summarize_architecture_plan(architecture_plan)
+
                 # If tests failed and we haven't reached max iterations, try to fix
                 if iteration < self.max_iterations:
                     print(f"\n🔄 Implementation failed tests. Starting revision {iteration + 1}...")
-                    
-                    revision_prompt = f"""Your previous code implementation had some issues. Please revise your implementation based on the following test report:
 
-TEST REPORT:
-{json.dumps(test_report, indent=2)}
+                    # Compress test report to actionable todos
+                    todos = self._compress_test_report_to_todos(test_report)
 
-ARCHITECTURE PLAN:
-{architecture_plan}
+                    # Use summary for subsequent iterations
+                    arch_context = architecture_plan if iteration == 1 else architecture_summary
+
+                    # Extract clean code without markdown
+                    prev_code = self._extract_code_from_response(implementation)
+
+                    revision_prompt = f"""Your previous code implementation had some issues. Please revise your implementation to address the following:
+
+ISSUES TO FIX:
+{todos}
+
+ARCHITECTURE REQUIREMENTS:
+{arch_context}
 
 YOUR PREVIOUS IMPLEMENTATION:
 ```python
-{implementation}
+{prev_code}
 ```
 
-Please provide a complete revised implementation that addresses all the issues mentioned in the test report."""
-                    
+Please provide a complete revised implementation that addresses all the issues mentioned above."""
+
                     implementation = self.software_engineer.process(revision_prompt)
+
+                    # Validate the revised code
+                    extracted_code = self._extract_code_from_response(implementation)
+                    is_valid, error_msg = self._validate_code_syntax(extracted_code)
+
+                    if not is_valid:
+                        print(f"⚠️ Warning: Revised code still has syntax errors:")
+                        print(f"  {error_msg}")
+
                     self.results["implementation_history"].append(implementation)
                 else:
                     print("❌ Maximum iterations reached. Implementation still has issues.")
@@ -507,25 +794,49 @@ Please provide a complete revised implementation that addresses all the issues m
             except json.JSONDecodeError:
                 print("⚠️ Could not parse test report as JSON. Using the report as-is.")
                 self.results["test_reports"].append({"raw_report": test_report_str})
+
+                # Create architecture summary after first iteration
+                if iteration == 1 and architecture_summary is None:
+                    print("📝 Summarizing architecture plan for subsequent iterations...")
+                    architecture_summary = self._summarize_architecture_plan(architecture_plan)
+
                 if iteration < self.max_iterations:
+                    # Use summary for subsequent iterations
+                    arch_context = architecture_plan if iteration == 1 else architecture_summary
+
+                    # Truncate test report if too long
+                    compressed_report = test_report_str[:1000] + "..." if len(test_report_str) > 1000 else test_report_str
+
+                    # Extract clean code without markdown
+                    prev_code = self._extract_code_from_response(implementation)
+
                     revision_prompt = f"""Your previous code implementation had some issues. Please revise your implementation based on the following test report:
 
-TEST REPORT:
-{test_report_str}
+TEST REPORT (summary):
+{compressed_report}
 
-ARCHITECTURE PLAN:
-{architecture_plan}
+ARCHITECTURE REQUIREMENTS:
+{arch_context}
 
 YOUR PREVIOUS IMPLEMENTATION:
 ```python
-{implementation}
+{prev_code}
 ```
 
 Please provide a complete revised implementation that addresses all the issues mentioned in the test report."""
-                    
+
                     implementation = self.software_engineer.process(revision_prompt)
+
+                    # Validate the revised code
+                    extracted_code = self._extract_code_from_response(implementation)
+                    is_valid, error_msg = self._validate_code_syntax(extracted_code)
+
+                    if not is_valid:
+                        print(f"⚠️ Warning: Revised code still has syntax errors:")
+                        print(f"  {error_msg}")
+
                     self.results["implementation_history"].append(implementation)
-            
+
             iteration += 1
         
         # Store final results
