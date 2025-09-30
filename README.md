@@ -1,6 +1,6 @@
 # Agents from scratch
 
-This is an experiment using Claude 3.7 to design and create an "agentic framework" using only barebones dependencies and raw openai (or openai-compatible) API calls.
+This is an experiment using Claude Code to design and create an "agentic framework" using only barebones dependencies and raw openai (or openai-compatible) API calls.
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/oshea00/codeagents)
 
@@ -34,17 +34,61 @@ Open browser at http://localhost:8000/docs
 # Instructions for use
 
 ## Prerequisites
-- Docker 
-- OPENAI_API_KEY
-- Python environment has ```openai``` package.
-- ```uv``` utility.
+- Docker
+- OPENAI_API_KEY or ANTHROPIC_API_KEY (depending on provider)
+- Python environment with `litellm` package
+- `uv` utility
 
-How to run the script (from root of project directory):
-```
+## Running the script
+
+From the root of the project directory:
+```bash
 uv sync
 source .venv/bin/activate
+python agents_from_scratch_docker.py [OPTIONS]
+```
+
+## Command Line Options
+
+- `--description-file <path>` - Path to a file containing the problem description
+- `--max-iterations <n>` - Maximum number of test-fix iterations (default: 2)
+- `--pass-threshold <percent>` - Minimum percentage of tests that must pass to succeed (default: 90.0)
+- `--model <model>` - Model name to use (e.g., `openai/gpt-5-mini`, `anthropic/claude-sonnet-4-5-20250929`). If not provided, you'll be prompted to choose a provider.
+- `--max-tokens <n>` - Maximum tokens to generate (default: 64000)
+
+## Examples
+
+### Interactive mode with default settings:
+```bash
 python agents_from_scratch_docker.py
 ```
 
-Answer the prompts.
+### Specify model directly:
+```bash
+python agents_from_scratch_docker.py --model openai/gpt-5-mini
+```
+
+### Use a problem description file with custom settings:
+```bash
+python agents_from_scratch_docker.py \
+  --description-file problem.txt \
+  --model anthropic/claude-sonnet-4-5-20250929 \
+  --max-iterations 3 \
+  --pass-threshold 95.0 \
+  --max-tokens 32000
+```
+
+## Supported Models
+
+The system uses `litellm` to support multiple LLM providers:
+
+### OpenAI models:
+- `openai/gpt-4.1` - Supports `temperature` and `max_tokens`
+- `openai/gpt-4o` - Supports `temperature` and `max_tokens`
+- `openai/gpt-5-mini` - Uses `max_completion_tokens`, no `temperature` support
+
+### Anthropic models:
+- `anthropic/claude-sonnet-4-5-20250929` - Supports `temperature` and `max_tokens`
+
+The system automatically handles parameter differences between models.
 

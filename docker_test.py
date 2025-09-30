@@ -150,8 +150,12 @@ class PythonPackageAnalyzer:
         Returns:
             bool: True if the package is likely part of the standard library
         """
+        # __future__ is a special module that should always be treated as standard library
+        if package_name == '__future__':
+            return True
+
         # List of common standard library modules
-        std_libs = [n for n in sys.stdlib_module_names if n[0] != '_'] 
+        std_libs = [n for n in sys.stdlib_module_names if n[0] != '_']
         return package_name in std_libs
 
     def _find_python_version(self):
