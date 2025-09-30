@@ -1,4 +1,5 @@
-create a cli calculator that runs in a REPL loop and handles basic arithmetic. 
+create a cli calculator that runs in a REPL loop and handles scientific functions, including
+trigonometric, factorial, and exponential functions, as well as binary and logic operations.
 Ensure that operations follow the precedence rules for arithmetic, and handle negative number literals properly, 
 keeping in mind that consecutive minus signs can precede a unary expression. 
 For example: --3 is equal to 3. 
@@ -6,3 +7,6 @@ The negative sign should have higher precedence when preceding a unary expressio
 The basic arithmetic operations (+,-,/,*) when used to take two arguments should treat multiplication 
 and division with higher priority than addition and subtraction. 
 When precedent is equal, operations are handled in sequence.
+Support variable assignment and usage.
+Also add command line history handling so that the up arrow and down arrow can scroll through past commands.
+Also, provide a help facility within the REPL so users can ask for help using the CLI.

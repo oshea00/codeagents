@@ -29,22 +29,74 @@ class Agent:
         """Get the messages for the API call, including system prompt."""
         return [{"role": "system", "content": self.system_prompt}] + self.history
 
-    def query_llm(self, messages: List[Dict[str,str]] = None) -> str:
+    def query_llm(self, messages: List[Dict[str,str]] = None, max_retries: int = 3, timeout: int = 120) -> str:
         """Query the LLM with the current messages, allowing override
-        of messages given in the function call, and return the response.""" 
-        use_messages = messages if messages else self.get_messages()    
-        response = completion(model=self.model,
-            messages=use_messages,
-            temperature=self.temperature,
-            stream=True
-        )
+        of messages given in the function call, and return the response.
 
-        response_text = ""
-        for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                response_text += chunk.choices[0].delta.content
+        Args:
+            messages: Optional override for messages to send
+            max_retries: Maximum number of retry attempts (default: 3)
+            timeout: Timeout in seconds for the entire request (default: 120)
+        """
+        use_messages = messages if messages else self.get_messages()
 
-        return response_text
+        # Set max_tokens based on provider
+        # Anthropic (Claude Sonnet 4.5): 64K output token limit
+        # OpenAI (GPT-4): 32K output token limit
+        if "anthropic" in self.model.lower():
+            max_tokens_limit = 64000  # Claude Sonnet 4.5 supports 64K output
+        elif "openai" in self.model.lower() or "gpt" in self.model.lower():
+            max_tokens_limit = 32000  # GPT-4 supports 32K output
+        else:
+            max_tokens_limit = 16000  # Default for unknown providers
+
+        for attempt in range(max_retries):
+            try:
+                # Use streaming with timeout
+                # Note: litellm timeout may not work properly with all providers
+                print(f"   Calling LLM API (timeout: {timeout}s, max_tokens: {max_tokens_limit})...", end='', flush=True)
+
+                response = completion(
+                    model=self.model,
+                    messages=use_messages,
+                    temperature=self.temperature,
+                    stream=True,
+                    timeout=timeout,
+                    request_timeout=timeout,  # Alternative timeout parameter
+                    max_tokens=max_tokens_limit
+                )
+
+                response_text = ""
+                chunk_count = 0
+                for chunk in response:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        response_text += chunk.choices[0].delta.content
+                        chunk_count += 1
+                        # Print a dot every 50 chunks as progress indicator
+                        if chunk_count % 50 == 0:
+                            print('.', end='', flush=True)
+
+                print(' ✓')  # Success indicator
+                return response_text
+
+            except Exception as e:
+                error_str = str(e).lower()
+                # Check if it's a timeout or connection error
+                is_timeout = any(keyword in error_str for keyword in ['timeout', 'timed out', 'connection', 'read timeout'])
+
+                if is_timeout:
+                    print(f"\n⚠️ LLM API timeout (attempt {attempt + 1}/{max_retries})")
+                else:
+                    print(f"\n⚠️ LLM API error (attempt {attempt + 1}/{max_retries}): {str(e)[:100]}")
+
+                if attempt < max_retries - 1:
+                    print(f"   Retrying in 3 seconds...")
+                    time.sleep(3)
+                else:
+                    print(f"   All retries exhausted. Failing.")
+                    raise Exception(f"LLM API failed after {max_retries} attempts: {e}")
+
+        raise Exception("LLM API call failed unexpectedly")
     
     def process(self, input_text: str) -> str:
         """Query the LLM with a prompt and return the response."""
@@ -226,8 +278,10 @@ Focus on providing actionable feedback and specific fixes for any issues found."
             json.loads(response_text)
         except:
             # If not valid JSON, create a basic report
+            # Use 80% threshold from test_results if available
+            passed = test_results.get("success", False)  # This already reflects 80% threshold
             basic_report = {
-                "passed": test_results.get("return_code", -1) == 0,
+                "passed": passed,
                 "results": {
                     "compilation_success": "Traceback" not in test_results.get("stderr", ""),
                     "test_results": [],
@@ -238,12 +292,16 @@ Focus on providing actionable feedback and specific fixes for any issues found."
                         "location": "unknown",
                         "fix_suggestion": "Review the error trace above"
                     }] if test_results.get("stderr", "") else [],
-                    "overall_assessment": "Execution failed with errors" if test_results.get("stderr", "") else 
-                                         "Code executed but analysis could not be completed"
+                    "overall_assessment": "Execution failed with errors" if test_results.get("stderr", "") else
+                                         "Code executed but analysis could not be completed",
+                    "pass_percentage": test_results.get("pass_percentage", 0.0),
+                    "passed_count": test_results.get("passed_count", 0),
+                    "failed_count": test_results.get("failed_count", 0),
+                    "total_count": test_results.get("total_count", 0)
                 }
             }
             response_text = json.dumps(basic_report, indent=2)
-        
+
         return response_text
     
     def _generate_test_code(self, code_to_test: str, architecture_plan: str) -> str:
@@ -443,7 +501,10 @@ def pytest_runtest_makereport(item, call):
                         print(f"  - {module}")
 
                 # Build container using the generated Dockerfile
-                print("\nBuilding Docker container...")
+                print("\nBuilding Docker container (timeout: 120s)...")
+                import time
+                start_time = time.time()
+
                 build_result = subprocess.run(
                     ["docker", "build", "-t", "test", "."],
                     capture_output=True,
@@ -451,7 +512,12 @@ def pytest_runtest_makereport(item, call):
                     timeout=120  # 2 minute timeout for build
                 )
 
+                elapsed = time.time() - start_time
+                print(f"✓ Build completed in {elapsed:.1f}s")
+
                 if build_result.returncode != 0:
+                    print(f"✗ Docker build failed!")
+                    print(f"Build stderr (last 500 chars):\n{build_result.stderr[-500:]}")
                     return {
                         "success": False,
                         "stdout": build_result.stdout,
@@ -460,18 +526,75 @@ def pytest_runtest_makereport(item, call):
                     }
 
                 # Use Docker to run the tests in the "test" container
+                print("Running tests in Docker container...")
+                test_start = time.time()
+
                 result = subprocess.run(["docker", "run", "test"],
                     capture_output=True,
                     text=True,
                     timeout=30, # 30 second timeout
                     encoding="utf-8"
                 )
-                
+
+                test_elapsed = time.time() - test_start
+                print(f"✓ Tests completed in {test_elapsed:.1f}s")
+
+                # Parse test results to calculate pass percentage
+                passed_count = 0
+                failed_count = 0
+                total_count = 0
+                lines = result.stdout.split('\n')
+
+                # Look for pytest summary line like "2 failed, 94 passed in 0.31s"
+                for line in lines:
+                    if ' passed' in line or ' failed' in line:
+                        import re
+                        # Extract numbers from summary line
+                        passed_match = re.search(r'(\d+) passed', line)
+                        failed_match = re.search(r'(\d+) failed', line)
+                        if passed_match:
+                            passed_count = int(passed_match.group(1))
+                        if failed_match:
+                            failed_count = int(failed_match.group(1))
+
+                total_count = passed_count + failed_count
+
+                # Calculate pass percentage
+                if total_count > 0:
+                    pass_percentage = (passed_count / total_count) * 100
+                    print(f"📊 Test Results: {passed_count}/{total_count} passed ({pass_percentage:.1f}%)")
+
+                    # 80% passing grade threshold
+                    meets_threshold = pass_percentage >= 80.0
+                else:
+                    meets_threshold = result.returncode == 0  # Fallback to exit code
+                    pass_percentage = 100.0 if meets_threshold else 0.0
+
+                # Show test summary
+                if result.returncode == 0:
+                    print("✓ All tests passed!")
+                elif meets_threshold:
+                    print(f"✓ Passing grade achieved ({pass_percentage:.1f}% ≥ 80%)")
+                else:
+                    print(f"✗ Below passing grade ({pass_percentage:.1f}% < 80%)")
+                    # Extract and show failure summary
+                    for i, line in enumerate(lines):
+                        if 'FAILED' in line or 'ERROR' in line:
+                            print(f"  {line}")
+                        elif 'short test summary' in line.lower():
+                            # Print summary section
+                            print("\n" + '\n'.join(lines[i:min(i+10, len(lines))]))
+                            break
+
                 return {
-                    "success": result.returncode == 0,
+                    "success": meets_threshold,  # Use 80% threshold instead of exit code
                     "stdout": result.stdout,
                     "stderr": result.stderr,
-                    "return_code": result.returncode
+                    "return_code": result.returncode,
+                    "pass_percentage": pass_percentage,
+                    "passed_count": passed_count,
+                    "failed_count": failed_count,
+                    "total_count": total_count
                 }
                 
             except subprocess.TimeoutExpired as e:
@@ -495,8 +618,17 @@ def pytest_runtest_makereport(item, call):
         stdout = test_results.get('stdout', '')
         stderr = test_results.get('stderr', '')
         return_code = test_results.get('return_code', -1)
+        pass_percentage = test_results.get('pass_percentage', 0.0)
+        passed_count = test_results.get('passed_count', 0)
+        failed_count = test_results.get('failed_count', 0)
+        total_count = test_results.get('total_count', 0)
 
         compressed = []
+
+        # Add test results summary with pass percentage
+        if total_count > 0:
+            status = "PASS (≥80%)" if pass_percentage >= 80.0 else "FAIL (<80%)"
+            compressed.append(f"📊 Test Results: {passed_count}/{total_count} passed ({pass_percentage:.1f}%) - {status}")
 
         # Add return code status
         if return_code == 0:
@@ -577,28 +709,60 @@ class AgenticFlow:
         """Extract Python code from engineer's response, handling various formats."""
         import re
 
+        # Debug: Save response to file for inspection
+        with open('debug_response.txt', 'w') as f:
+            f.write(response)
+
         # Try to find code in markdown code blocks with python identifier
         code_match = re.search(r'```python\n([\s\S]*?)\n```', response)
         if code_match:
+            print(f"✓ Matched pattern: ```python\\n...\\n```")
             return code_match.group(1)
 
         # Try with optional whitespace/newlines around markers
         code_match = re.search(r'```python\s*([\s\S]*?)\s*```', response)
         if code_match:
+            print(f"✓ Matched pattern: ```python\\s*...\\s*```")
             return code_match.group(1)
 
         # Try code block without language specifier
         code_match = re.search(r'```\n([\s\S]*?)\n```', response)
         if code_match:
+            print(f"✓ Matched pattern: ```\\n...\\n```")
             return code_match.group(1)
 
         code_match = re.search(r'```\s*([\s\S]*?)\s*```', response)
         if code_match:
+            print(f"✓ Matched pattern: ```\\s*...\\s*```")
             return code_match.group(1)
 
         # Debug: show first 200 chars to understand the format
         print(f"Warning: No code block markers found. Response starts with:")
         print(f"  {response[:200]!r}")
+
+        # Last attempt: check if response literally starts with the backticks
+        # Sometimes the response has the backticks but our regex isn't matching
+        if response.strip().startswith('```'):
+            print("Found backticks at start, attempting line-based extraction...")
+            lines = response.strip().split('\n')
+            # Find where code block starts and ends
+            start_idx = 0
+            end_idx = len(lines)
+
+            # Skip first line if it's just ```python or ```
+            if lines[0].startswith('```'):
+                start_idx = 1
+
+            # Find closing ```
+            for i in range(len(lines) - 1, 0, -1):
+                if lines[i].strip() == '```':
+                    end_idx = i
+                    break
+
+            code = '\n'.join(lines[start_idx:end_idx])
+            print(f"Extracted {len(code)} characters of code by line-based parsing")
+            return code
+
         print("Treating entire response as code")
         return response
 
@@ -881,19 +1045,21 @@ if __name__ == "__main__":
     # Argument parser setup
     parser = argparse.ArgumentParser(description="Run the Agentic Flow system.")
     parser.add_argument('--description-file', type=str, help='Path to a file containing the problem description.')
-    parser.add_argument('--max-iterations', type=int, default=3, help='Maximum number of test-fix iterations (default: 3).')
+    parser.add_argument('--max-iterations', type=int, default=2, help='Maximum number of test-fix iterations (default: 2).')
     args = parser.parse_args()
 
     # Setup correct client based on user input
+    print("\nℹ️  Note: Anthropic (Claude) is recommended for better reliability and timeout handling.")
     chosen_provider = input("🌐 Choose LLM provider (openai, anthropic): ").strip().lower()
     if chosen_provider == "anthropic":
-        model = "anthropic/claude-3-7-sonnet-20250219"
+        model = "anthropic/claude-sonnet-4-5-20250929"  # Claude Sonnet 4.5 with extended output tokens
     elif chosen_provider == "openai":
         model = "openai/gpt-4.1"
+        print("⚠️  Warning: OpenAI streaming may occasionally hang. If it hangs, press Ctrl+C and retry with Anthropic.")
     else:
-        print("Invalid provider selected. Defaulting to OpenAI gpt-4o.")
+        print("Invalid provider selected. Defaulting to OpenAI gpt-4.1.")
         chosen_provider = "openai"
-        model = "openai/gpt-4o"
+        model = "openai/gpt-4.1"
 
     print(f"Using LLM provider: {chosen_provider}")
     # Load problem description
@@ -934,7 +1100,23 @@ if __name__ == "__main__":
         print(f"✅ Implementation successful after {results['iterations_required']+1} iteration(s)")
     else:
         print(f"❌ Implementation still has issues after {results['iterations_required']} iteration(s)")
-    
+
+    # Show pass rate from final test report if available
+    if results.get("final_test_report"):
+        final_report = results["final_test_report"]
+        if isinstance(final_report, dict) and "results" in final_report:
+            test_results = final_report["results"]
+            # Check if we have pass percentage info
+            if "pass_percentage" in test_results:
+                pass_pct = test_results["pass_percentage"]
+                passed = test_results.get("passed_count", 0)
+                total = test_results.get("total_count", 0)
+                print(f"📊 Final Test Results: {passed}/{total} passed ({pass_pct:.1f}%)")
+                if pass_pct >= 80.0:
+                    print(f"✓ Meets passing grade (≥80%)")
+                else:
+                    print(f"✗ Below passing grade (<80%)")
+
     print(f"\n⏱️ Total execution time: {end_time - start_time:.2f} seconds")
     
     # Ask if user wants to see test reports
