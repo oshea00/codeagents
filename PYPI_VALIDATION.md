@@ -184,7 +184,7 @@ When validating an import like `tavily_websearch`:
 <div style="background-color: white; padding: 20px; border-radius: 8px;">
 
 ```mermaid
-%%{init: {'theme':'base', 'themeVariables': { 'background':'#FFFFFF','mainBkg':'#FFFFFF','secondBkg':'#FFFFFF','tertiaryBkg':'#FFFFFF','actorBkg':'#B0C4DE','actorBorder':'#000','actorTextColor':'#000','actorLineColor':'#000','signalColor':'#000','signalTextColor':'#000','labelBoxBkgColor':'#B0C4DE','labelBoxBorderColor':'#000','loopTextColor':'#000','activationBorderColor':'#000','activationBkgColor':'#B0C4DE','sequenceNumberColor':'#000','altSectionBkgColor':'#FFFFFF','noteBkgColor':'#FFFFFF','noteBorderColor':'#000'}}}%%
+%%{init: {'theme':'base', 'themeVariables': { 'actorBkg':'#B0C4DE','actorBorder':'#333','actorTextColor':'#333','actorLineColor':'#333','signalColor':'#333','signalTextColor':'#333','labelBoxBkgColor':'#B0C4DE','labelBoxBorderColor':'#333','loopTextColor':'#333','activationBorderColor':'#333','activationBkgColor':'#B0C4DE','sequenceNumberColor':'#333','noteBorderColor':'#333'}}}%%
 sequenceDiagram
     participant SE as Software Engineer
     participant TE as Test Engineer
