@@ -184,7 +184,7 @@ When validating an import like `tavily_websearch`:
 <div style="background-color: white; padding: 20px; border-radius: 8px;">
 
 ```mermaid
-%%{init: {'theme':'base', 'themeVariables': { 'actorBkg':'#B0C4DE','actorBorder':'#333','actorTextColor':'#333','actorLineColor':'#333','signalColor':'#333','signalTextColor':'#333','labelBoxBkgColor':'#B0C4DE','labelBoxBorderColor':'#333','loopTextColor':'#333','activationBorderColor':'#333','activationBkgColor':'#B0C4DE','sequenceNumberColor':'#333','noteBorderColor':'#333'}}}%%
+%%{init: {'theme':'base', 'themeVariables': { 'actorBkg':'#B0C4DE','actorBorder':'#aaa','actorTextColor':'#aaa','actorLineColor':'#aaa','signalColor':'#aaa','signalTextColor':'#aaa','labelBoxBkgColor':'#B0C4DE','labelBoxBorderColor':'#aaa','loopTextColor':'#aaa','activationBorderColor':'#aaa','activationBkgColor':'#B0C4DE','sequenceNumberColor':'#aaa','noteBorderColor':'#aaa'}}}%%
 sequenceDiagram
     participant SE as Software Engineer
     participant TE as Test Engineer
