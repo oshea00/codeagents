@@ -4,6 +4,7 @@ import os
 import sys
 import argparse
 from pathlib import Path
+from pypi_validator import PyPIValidator
 
 
 class PythonPackageAnalyzer:
@@ -18,6 +19,8 @@ class PythonPackageAnalyzer:
         python_code=None,
         filename=None,
         python_version="3.12",
+        enable_web_search=False,
+        model="anthropic/claude-sonnet-4-5-20250929",
     ):
         """
         Initialize the analyzer with a source directory, Python code as a string, or a Python file.
@@ -26,6 +29,9 @@ class PythonPackageAnalyzer:
             src_dir (str, optional): Directory containing Python files to analyze
             python_code (str, optional): Python code as a string
             filename (str, optional): Path to a Python file
+            python_version (str, optional): Python version to use (default: "3.12")
+            enable_web_search (bool, optional): Enable Tavily web search for package validation (default: False)
+            model (str, optional): LLM model to use for parsing search results (default: "anthropic/claude-sonnet-4-5-20250929")
         """
         self.src_dir = src_dir
         self.files = []
@@ -52,8 +58,11 @@ class PythonPackageAnalyzer:
         self.package_aliases = {
             "dotenv": "python-dotenv",
             "sklearn": "scikit-learn",
+            "tavily": "tavily-python",
             # Add more aliases as needed
         }
+        self.pypi_validator = PyPIValidator(enable_web_search=enable_web_search, model=model)
+        self.invalid_imports = []  # Track imports that couldn't be resolved
 
     def analyze(self):
         """
@@ -99,10 +108,8 @@ class PythonPackageAnalyzer:
         # Remove local modules from required packages
         self.required_packages = self.required_packages - local_module_names
 
-        # Apply package aliases
-        self.required_packages = {
-            self.package_aliases.get(pkg, pkg) for pkg in self.required_packages
-        }
+        # Validate packages against PyPI and resolve to correct distribution names
+        self._validate_and_resolve_packages()
 
         return self.required_packages
 
@@ -205,6 +212,33 @@ class PythonPackageAnalyzer:
         if re.search(r"match .+:", code) and re.search(r"case .+:", code):
             self.python_version = max(self.python_version, "3.10")
 
+    def _validate_and_resolve_packages(self):
+        """
+        Validate packages against PyPI and resolve import names to distribution names.
+        Updates self.required_packages with validated distribution names.
+        Populates self.invalid_imports with packages that couldn't be resolved.
+        """
+        validated_packages = set()
+        self.invalid_imports = []
+
+        for pkg in self.required_packages:
+            # Check if package is valid on PyPI
+            is_valid, dist_name, error_msg = self.pypi_validator.validate_import(
+                pkg, self.package_aliases
+            )
+
+            if is_valid and dist_name:
+                validated_packages.add(dist_name)
+                if dist_name != pkg:
+                    print(f"  Resolved: {pkg} -> {dist_name}")
+            else:
+                # Package not found on PyPI - likely hallucinated
+                self.invalid_imports.append((pkg, error_msg))
+                print(f"  ⚠️  Warning: {error_msg}")
+
+        # Update required_packages with validated distribution names
+        self.required_packages = validated_packages
+
     def generate_dockerfile(self, output_file="Dockerfile"):
         """
         Generate a Dockerfile that installs the required packages and pytest.
@@ -263,6 +297,15 @@ CMD ["python", "-m", "pytest","--cov=main", "--cov-report=term-missing"]
             self.analyze()
 
         return sorted(list(self.required_packages))
+
+    def get_invalid_imports(self):
+        """
+        Return the list of invalid imports that couldn't be resolved on PyPI.
+
+        Returns:
+            list: List of (import_name, error_message) tuples
+        """
+        return self.invalid_imports
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import time
 import re
 from typing import List, Dict, Any, Optional
 import argparse  # Add argparse import
+from dotenv import load_dotenv
 from docker_test import PythonPackageAnalyzer
 from litellm import completion
 
@@ -251,9 +252,10 @@ class TestEngineerAgent(Agent):
     """Agent specialized in testing and evaluating Python code implementations."""
 
     def __init__(
-        self, model: str, temperature: float = 0, pass_threshold: float = 90.0, max_tokens: int = 64000
+        self, model: str, temperature: float = 0, pass_threshold: float = 90.0, max_tokens: int = 64000, enable_web_search: bool = False
     ):
         self.pass_threshold = pass_threshold
+        self.enable_web_search = enable_web_search
         system_prompt = f"""You are an expert Python test engineer. Your job is to analyze, compile, and test Python code implementations.
 
 Your responsibilities include:
@@ -556,6 +558,7 @@ def pytest_runtest_makereport(item, call):
                     "stdout": "",
                     "stderr": "Docker daemon is not responding. Please restart Docker Desktop.",
                     "return_code": -1,
+                    "invalid_imports": [],
                 }
             except (subprocess.SubprocessError, FileNotFoundError):
                 return {
@@ -563,6 +566,7 @@ def pytest_runtest_makereport(item, call):
                     "stdout": "",
                     "stderr": "Docker is not available on this system",
                     "return_code": -1,
+                    "invalid_imports": [],
                 }
 
             # Additional check: try to list images to verify daemon is working
@@ -579,6 +583,7 @@ def pytest_runtest_makereport(item, call):
                     "stdout": "",
                     "stderr": "Docker daemon is not responding. Please restart Docker Desktop and try again.",
                     "return_code": -1,
+                    "invalid_imports": [],
                 }
             except subprocess.SubprocessError:
                 return {
@@ -586,15 +591,23 @@ def pytest_runtest_makereport(item, call):
                     "stdout": "",
                     "stderr": "Docker daemon is not accessible. Please check Docker Desktop is running.",
                     "return_code": -1,
+                    "invalid_imports": [],
                 }
 
             try:
-                analyzer = PythonPackageAnalyzer(src_dir="src")
+                analyzer = PythonPackageAnalyzer(src_dir="src", enable_web_search=self.enable_web_search, model=self.model)
                 # Analyze code and get required packages
                 required_packages = analyzer.analyze()
                 print(f"Found {len(required_packages)} required packages:")
                 for package in sorted(required_packages):
                     print(f"  - {package}")
+
+                # Check for invalid imports
+                invalid_imports = analyzer.get_invalid_imports()
+                if invalid_imports:
+                    print(f"\n⚠️  Found {len(invalid_imports)} invalid/unresolved imports:")
+                    for import_name, error_msg in invalid_imports:
+                        print(f"  ✗ {import_name}: {error_msg}")
 
                 # Generate Dockerfile
                 dockerfile = analyzer.generate_dockerfile(output_file="Dockerfile")
@@ -640,6 +653,7 @@ def pytest_runtest_makereport(item, call):
                         "stdout": build_result.stdout,
                         "stderr": f"Docker build failed:\n{build_result.stderr}",
                         "return_code": build_result.returncode,
+                        "invalid_imports": invalid_imports,
                     }
 
                 # Use Docker to run the tests in the "test" container
@@ -720,6 +734,7 @@ def pytest_runtest_makereport(item, call):
                     "passed_count": passed_count,
                     "failed_count": failed_count,
                     "total_count": total_count,
+                    "invalid_imports": invalid_imports,
                 }
 
             except subprocess.TimeoutExpired as e:
@@ -731,6 +746,7 @@ def pytest_runtest_makereport(item, call):
                     "stdout": "",
                     "stderr": f"{timeout_msg} timed out",
                     "return_code": -1,
+                    "invalid_imports": [],
                 }
             except Exception as e:
                 return {
@@ -738,6 +754,7 @@ def pytest_runtest_makereport(item, call):
                     "stdout": "",
                     "stderr": f"Error running tests: {str(e)}",
                     "return_code": -1,
+                    "invalid_imports": [],
                 }
 
     def _compress_sandbox_results(self, test_results: dict) -> str:
@@ -749,8 +766,21 @@ def pytest_runtest_makereport(item, call):
         passed_count = test_results.get("passed_count", 0)
         failed_count = test_results.get("failed_count", 0)
         total_count = test_results.get("total_count", 0)
+        invalid_imports = test_results.get("invalid_imports", [])
 
         compressed = []
+
+        # Add invalid imports warning first (critical issue)
+        if invalid_imports:
+            compressed.append("⚠️  INVALID/UNRESOLVED IMPORTS:")
+            compressed.append("The following imports could not be resolved on PyPI and are likely hallucinated or misspelled:")
+            for import_name, error_msg in invalid_imports:
+                compressed.append(f"  ✗ {import_name}")
+                compressed.append(f"    {error_msg}")
+            compressed.append("\nPlease fix these imports by either:")
+            compressed.append("  1. Correcting the import name to match the actual PyPI package")
+            compressed.append("  2. Using standard library modules instead")
+            compressed.append("  3. Removing the import if it's not needed\n")
 
         # Add test results summary with pass percentage
         if total_count > 0:
@@ -834,14 +864,14 @@ class AgenticFlow:
     """Manages the flow of information between agents."""
 
     def __init__(
-        self, model: str, max_iterations=3, temperature=0, pass_threshold=90.0, max_tokens=64000
+        self, model: str, max_iterations=3, temperature=0, pass_threshold=90.0, max_tokens=64000, enable_web_search=False
     ):
         self.architect = ArchitectAgent(model=model, temperature=temperature, max_tokens=max_tokens)
         self.software_engineer = SoftwareEngineerAgent(
             model=model, temperature=temperature, max_tokens=max_tokens
         )
         self.test_engineer = TestEngineerAgent(
-            model=model, temperature=temperature, pass_threshold=pass_threshold, max_tokens=max_tokens
+            model=model, temperature=temperature, pass_threshold=pass_threshold, max_tokens=max_tokens, enable_web_search=enable_web_search
         )
         self.max_iterations = max_iterations
         self.temperature = temperature
@@ -1291,6 +1321,9 @@ if __name__ == "__main__":
     print("🤖 Agentic Flow - Software Development System")
     print("--------------------------------------------")
 
+    # Load environment variables from .env file
+    load_dotenv()
+
     # Check Docker availability first
     if not check_docker_availability():
         print(
@@ -1330,7 +1363,31 @@ if __name__ == "__main__":
         default=64000,
         help="Maximum tokens to generate (default: 64000).",
     )
+    parser.add_argument(
+        "--search",
+        type=lambda x: x.lower() == "true",
+        default=True,
+        help="Enable Tavily web search for package validation (default: true).",
+    )
     args = parser.parse_args()
+
+    # Check for TAVILY_API_KEY if web search is enabled
+    if args.search:
+        tavily_api_key = os.getenv("TAVILY_API_KEY")
+        if not tavily_api_key:
+            print("\n⚠️  WARNING: Web search is enabled (--search true) but TAVILY_API_KEY environment variable is not set!")
+            print("   Web search will not work without the API key.")
+            print("   Options:")
+            print("   1. Set TAVILY_API_KEY in your .env file")
+            print("   2. Export TAVILY_API_KEY in your shell: export TAVILY_API_KEY='your-key'")
+            print("   3. Disable web search with --search false")
+
+            response = input("\n   Continue anyway? (y/n): ").strip().lower()
+            if response != 'y':
+                print("\n   Exiting. Please set TAVILY_API_KEY or disable web search.")
+                exit(1)
+        else:
+            print(f"✓ Tavily API key found (web search enabled)")
 
     # Setup correct client based on user input or command line argument
     if args.model:
@@ -1393,6 +1450,7 @@ if __name__ == "__main__":
         temperature=0,
         pass_threshold=args.pass_threshold,
         max_tokens=args.max_tokens,
+        enable_web_search=args.search,
     )
     results = flow.run(problem_description)
     end_time = time.time()

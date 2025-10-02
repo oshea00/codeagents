@@ -1,0 +1,3 @@
+create a python mcp script that leverages the python sdk for modelcontextprotocol.io - the mcp should provide a web search tool
+that uses tavily API to provide search service
+
