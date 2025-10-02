@@ -209,7 +209,7 @@ flowchart TB
 <div style="background-color: white; padding: 20px; border-radius: 8px;">
 
 ```mermaid
-%%{init: {'theme':'base', 'themeVariables': { 'actorBkg':'#B0C4DE','actorBorder':'#000','actorTextColor':'#000','actorLineColor':'#000','signalColor':'#000','signalTextColor':'#000','labelBoxBkgColor':'#B0C4DE','labelBoxBorderColor':'#000','loopTextColor':'#000','activationBorderColor':'#000','activationBkgColor':'#B0C4DE','sequenceNumberColor':'#000'}}}%%
+%%{init: {'theme':'base', 'themeVariables': { 'background':'#FFFFFF','mainBkg':'#FFFFFF','secondBkg':'#FFFFFF','tertiaryBkg':'#FFFFFF','actorBkg':'#B0C4DE','actorBorder':'#000','actorTextColor':'#000','actorLineColor':'#000','signalColor':'#000','signalTextColor':'#000','labelBoxBkgColor':'#B0C4DE','labelBoxBorderColor':'#000','loopTextColor':'#000','activationBorderColor':'#000','activationBkgColor':'#B0C4DE','sequenceNumberColor':'#000','altSectionBkgColor':'#FFFFFF','noteBkgColor':'#FFFFFF','noteBorderColor':'#000'}}}%%
 sequenceDiagram
     autonumber
     actor User
