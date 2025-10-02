@@ -191,7 +191,7 @@ sequenceDiagram
     participant PA as Package Analyzer
     participant PV as PyPI Validator
     participant TS as Tavily Search
-    participant LLM as Claude LLM
+    participant LLM as LLM
     participant PyPI as PyPI API
 
     SE->>TE: Generated code with imports
