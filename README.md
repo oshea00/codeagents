@@ -209,7 +209,7 @@ flowchart TB
 <div style="background-color: white; padding: 20px; border-radius: 8px;">
 
 ```mermaid
-%%{init: {'theme':'base', 'themeVariables': { 'actorBkg':'#B0C4DE','actorBorder':'#aaa','actorTextColor':'#aaa','actorLineColor':'#aaa','signalColor':'#aaa','signalTextColor':'#aaa','labelBoxBkgColor':'#B0C4DE','labelBoxBorderColor':'#aaa','loopTextColor':'#aaa','activationBorderColor':'#aaa','activationBkgColor':'#B0C4DE','sequenceNumberColor':'#aaa','noteBorderColor':'#aaa'}}}%%
+%%{init: {'theme':'base', 'themeVariables': { 'actorBkg':'#1657AD','actorBorder':'#aaa','actorTextColor':'#aaa','actorLineColor':'#aaa','signalColor':'#aaa','signalTextColor':'#aaa','labelBoxBkgColor':'#B0C4DE','labelBoxBorderColor':'#aaa','loopTextColor':'#aaa','activationBorderColor':'#aaa','activationBkgColor':'#B0C4DE','sequenceNumberColor':'#aaa','noteBorderColor':'#aaa'}}}%%
 sequenceDiagram
     autonumber
     actor User
