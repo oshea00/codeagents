@@ -10,6 +10,7 @@ import requests
 import re
 import os
 import json
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from functools import lru_cache
 from litellm import completion
@@ -268,6 +269,7 @@ class PyPIValidator:
         self,
         enable_web_search: bool = False,
         model: str = "anthropic/claude-sonnet-4-5-20250929",
+        cache_file: Optional[str] = None,
     ):
         self.base_url = "https://pypi.org/pypi"
         self.timeout = 5  # seconds
@@ -277,6 +279,43 @@ class PyPIValidator:
         self.web_search_helper = (
             TavilySearchHelper(model=model) if enable_web_search else None
         )
+
+        # Set up persistent cache file
+        if cache_file is None:
+            cache_file = Path.home() / ".pypi_validator_cache.json"
+        self.cache_file = Path(cache_file)
+        self._load_cache()
+
+    def _load_cache(self):
+        """Load the persistent cache from disk if it exists."""
+        try:
+            if self.cache_file.exists():
+                with open(self.cache_file, "r", encoding="utf-8") as f:
+                    cache_data = json.load(f)
+                    # Validate cache format
+                    if isinstance(cache_data, dict):
+                        self.import_to_dist_cache = cache_data
+                        print(
+                            f"Loaded {len(cache_data)} cached entries from {self.cache_file}"
+                        )
+                    else:
+                        print(
+                            f"Warning: Invalid cache format in {self.cache_file}, starting fresh"
+                        )
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Warning: Could not load cache from {self.cache_file}: {e}")
+            # Continue with empty cache
+
+    def _save_cache(self):
+        """Save the current cache to disk."""
+        try:
+            # Create directory if it doesn't exist
+            self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(self.cache_file, "w", encoding="utf-8") as f:
+                json.dump(self.import_to_dist_cache, f, indent=2, sort_keys=True)
+        except IOError as e:
+            print(f"Warning: Could not save cache to {self.cache_file}: {e}")
 
     @lru_cache(maxsize=256)
     def check_distribution_exists(
@@ -387,16 +426,18 @@ class PyPIValidator:
             exists, _ = self.check_distribution_exists(dist_name)
             if exists:
                 self.import_to_dist_cache[import_name] = dist_name
+                self._save_cache()
                 return True, dist_name, None
 
         # Generate and try candidate distribution names
         candidates = self.generate_candidate_names(import_name)
 
         for candidate in candidates:
-            exists, metadata = self.check_distribution_exists(candidate)
+            exists, _ = self.check_distribution_exists(candidate)
             if exists:
                 # Found it! Cache and return
                 self.import_to_dist_cache[import_name] = candidate
+                self._save_cache()
                 return True, candidate, None
 
         # Not found on PyPI - try web search if enabled
@@ -410,10 +451,12 @@ class PyPIValidator:
                 # Found a valid package through web search!
                 print(f"✓ Web search found valid package: {valid_package}")
                 self.import_to_dist_cache[import_name] = valid_package
+                self._save_cache()
                 return True, valid_package, None
             elif search_results:
                 # Web search completed but no valid package found
                 self.import_to_dist_cache[import_name] = None
+                self._save_cache()
                 error_msg = (
                     f"Import '{import_name}' not found on PyPI. Tried: {', '.join(candidates)}\n"
                     f"\nWeb search results:\n{search_results}"
@@ -422,6 +465,7 @@ class PyPIValidator:
 
         # Not found on PyPI
         self.import_to_dist_cache[import_name] = None
+        self._save_cache()
         error_msg = (
             f"Import '{import_name}' not found on PyPI. Tried: {', '.join(candidates)}"
         )
@@ -475,7 +519,9 @@ class PyPIValidator:
 
 
 def validate_requirements(
-    import_names: List[str], known_aliases: Dict[str, str] = None
+    import_names: List[str],
+    known_aliases: Dict[str, str] = None,
+    cache_file: Optional[str] = None,
 ) -> Tuple[List[str], List[Tuple[str, str]]]:
     """
     Convenience function to validate a list of imports and generate requirements.txt entries.
@@ -483,13 +529,14 @@ def validate_requirements(
     Args:
         import_names: List of import names from Python code
         known_aliases: Optional dict mapping import names to distribution names
+        cache_file: Optional path to cache file for persistent storage
 
     Returns:
         Tuple of (valid_requirements, invalid_imports)
         - valid_requirements: List of distribution names for requirements.txt
         - invalid_imports: List of (import_name, error_message) tuples
     """
-    validator = PyPIValidator()
+    validator = PyPIValidator(cache_file=cache_file)
     valid_requirements = []
     invalid_imports = []
 
