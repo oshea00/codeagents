@@ -1,3 +1,16 @@
 create a python mcp script that leverages the python sdk for modelcontextprotocol.io - the mcp should provide a web search tool
-that uses tavily API to provide search service
+that uses tavily API to provide a web search service.
+adding mcp to project: pip install "mcp[cli]"
+#!/usr/bin/env python3
+import os
+import asyncio
+from mcp.server import Server
+from mcp.types import Tool, TextContent
+from mcp.server.stdio import stdio_server
+from tavily import TavilyClient
+
+requirements.txt
+    "mcp>=1.0.0",
+    "tavily-python>=0.3.0"
+the script should use stdio transport.
 

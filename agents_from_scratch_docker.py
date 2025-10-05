@@ -64,7 +64,12 @@ class Agent:
     """Base agent class with core functionality."""
 
     def __init__(
-        self, name: str, system_prompt: str, model: str, temperature: float = 0, max_tokens: int = 64000
+        self,
+        name: str,
+        system_prompt: str,
+        model: str,
+        temperature: float = 0,
+        max_tokens: int = 64000,
     ):
         self.name = name
         self.system_prompt = system_prompt
@@ -176,7 +181,7 @@ class Agent:
 class ArchitectAgent(Agent):
     """Agent specialized in designing software architecture based on problem descriptions."""
 
-    def __init__(self, model: str, temperature: float = 0, max_tokens: int = 64000):
+    def __init__(self, model: str, temperature: float = 0, max_tokens: int = 64000, enable_web_search: bool = False):
         system_prompt = """You are an expert software architect. Your job is to:
 1. Analyze the problem description that is provided to you
 2. Break down the requirements into clear, actionable items
@@ -196,8 +201,303 @@ Format your response in a structured way with clear sections for:
 Be specific, practical, and focus on creating a plan that developers can follow to implement the solution."""
 
         super().__init__(
-            "Architect", system_prompt, model=model, temperature=temperature, max_tokens=max_tokens
+            "Architect",
+            system_prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
+        self.enable_web_search = enable_web_search
+        self.tavily_client = None
+
+    def _get_websearch_client(self):
+        """Get or create Tavily client."""
+        if self.tavily_client is None:
+            try:
+                from tavily import TavilyClient
+
+                api_key = os.getenv("TAVILY_API_KEY")
+                if not api_key:
+                    print("   Warning: TAVILY_API_KEY not found, skipping web search")
+                    return None
+                self.tavily_client = TavilyClient(api_key=api_key)
+            except ImportError:
+                print("   Warning: tavily-python package not installed, skipping web search")
+                return None
+        return self.tavily_client
+
+    def _summarize_search_results(self, search_response: dict, problem_description: str) -> str:
+        """
+        Use LLM to summarize web search results into actionable todos/insights.
+
+        Args:
+            search_response: The raw Tavily search response
+            problem_description: The original problem description
+
+        Returns:
+            Summarized context as a string
+        """
+        # Build context from search results
+        search_context = f"Problem: {problem_description}\n\n"
+
+        if search_response.get("answer"):
+            search_context += f"AI Summary: {search_response['answer']}\n\n"
+
+        search_context += "Search Results:\n"
+        num_results = len(search_response.get("results", []))
+        for i, result in enumerate(search_response.get("results", [])[:5], 1):
+            search_context += f"\n{i}. {result.get('title', 'No title')}\n"
+            search_context += f"   URL: {result.get('url', 'N/A')}\n"
+            search_context += f"   Content: {result.get('content', 'N/A')[:500]}...\n"
+
+        # Debug: Log the search context being sent
+        print(f"   🔍 DEBUG: Built search context with {num_results} results, total length: {len(search_context)} chars")
+        print(f"   🔍 DEBUG: First 200 chars of context: {search_context[:200]}")
+
+        # Create summarization prompt
+        prompt = f"""Analyze the following web search results about a software problem and create a structured summary.
+
+{search_context}
+
+Create a concise summary in the following format:
+
+## Key Insights from Web Research
+
+### Technical Considerations
+- [List key technical points, best practices, and patterns discovered]
+
+### Recommended Technologies/Libraries
+- [List specific technologies, frameworks, or libraries mentioned that are relevant]
+
+### Implementation Todos/Checklist
+- [ ] [Actionable item based on research]
+- [ ] [Another actionable item]
+- [ ] [etc.]
+
+### Potential Challenges
+- [List challenges or gotchas mentioned in the research]
+
+Be specific and actionable. Focus on information that will help design a better architecture.
+Keep the summary concise (under 300 words) but information-dense."""
+
+        try:
+            print("   📝 Summarizing search results with LLM...")
+            print(f"   🔍 DEBUG: Prompt length: {len(prompt)} chars")
+            print(f"   🔍 DEBUG: Model: {self.model}")
+
+            # Build parameters using helper function
+            completion_params = build_completion_params(
+                model=self.model,
+                temperature=0,
+                max_tokens=1000,
+                stream=False,
+                timeout=30,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert at analyzing technical information and creating actionable summaries for software architects."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            )
+
+            print(f"   🔍 DEBUG: Calling LLM with params: {list(completion_params.keys())}")
+            response = completion(**completion_params)
+
+            # Debug the response structure
+            print(f"   🔍 DEBUG: Response type: {type(response)}")
+            print(f"   🔍 DEBUG: Has choices: {hasattr(response, 'choices')}")
+            if hasattr(response, 'choices') and response.choices:
+                print(f"   🔍 DEBUG: First choice has message: {hasattr(response.choices[0], 'message')}")
+                if hasattr(response.choices[0], 'message'):
+                    raw_content = response.choices[0].message.content
+                    print(f"   🔍 DEBUG: Message content type: {type(raw_content)}")
+                    print(f"   🔍 DEBUG: Message content is None: {raw_content is None}")
+                    print(f"   🔍 DEBUG: Raw content repr: {repr(raw_content)}")
+
+            summary = response.choices[0].message.content if response.choices[0].message.content else ""
+            summary = summary.strip()
+
+            print(f"   🔍 DEBUG: Summary after strip repr: {repr(summary[:100])}")
+            print(f"   🔍 DEBUG: Summary length: {len(summary)}")
+            print(f"   🔍 DEBUG: Checking if summary is empty... not summary = {not summary}, len < 50 = {len(summary) < 50}")
+
+            # Validate the summary is not empty
+            if not summary or len(summary) < 50:
+                print(f"   ⚠️  LLM returned empty/short summary ({len(summary)} chars), falling back to raw results")
+                try:
+                    fallback = self._format_raw_search_results(search_response)
+                    print(f"   ✓ Fallback raw results length: {len(fallback)} chars")
+                    return fallback
+                except Exception as fallback_err:
+                    print(f"   ❌ Fallback formatting failed: {fallback_err}")
+                    return ""
+
+            print(f"   ✓ Summary created ({len(summary)} chars)")
+            return f"\n\n=== WEB RESEARCH SUMMARY ===\n\n{summary}\n\n=== END WEB RESEARCH SUMMARY ===\n\n"
+
+        except Exception as e:
+            print(f"   ❌ LLM summarization exception: {e}")
+            # Fallback to basic formatting if LLM fails
+            try:
+                fallback = self._format_raw_search_results(search_response)
+                print(f"   ✓ Exception fallback raw results length: {len(fallback)} chars")
+                return fallback
+            except Exception as fallback_err:
+                print(f"   ❌ Fallback also failed: {fallback_err}")
+                return ""
+
+    def _format_raw_search_results(self, search_response: dict) -> str:
+        """
+        Fallback method to format raw search results if LLM summarization fails.
+
+        Args:
+            search_response: The Tavily search response
+
+        Returns:
+            Formatted search results as a string
+        """
+        context = "\n\n=== WEB SEARCH CONTEXT ===\n\n"
+
+        if search_response.get("answer"):
+            context += f"AI Summary:\n{search_response['answer']}\n\n"
+
+        context += f"Relevant Sources ({len(search_response.get('results', []))} results):\n\n"
+        for i, result in enumerate(search_response.get("results", [])[:5], 1):
+            context += f"{i}. {result.get('title', 'No title')}\n"
+            context += f"   URL: {result.get('url', 'N/A')}\n"
+            context += f"   Content: {result.get('content', 'N/A')[:400]}...\n\n"
+
+        context += "=== END WEB SEARCH CONTEXT ===\n\n"
+        return context
+
+    def _create_search_query(self, problem_description: str) -> str:
+        """
+        Create a concise search query from the problem description.
+        Tavily has a 400 character limit, so we truncate to 390 to be safe.
+
+        Args:
+            problem_description: The full problem description
+
+        Returns:
+            A concise search query (max 390 chars)
+        """
+        # If already short enough, return as-is
+        if len(problem_description) <= 390:
+            print(f"   📝 Query within limit ({len(problem_description)} chars), using as-is")
+            return problem_description
+
+        # Try to use LLM to create a concise query
+        try:
+            prompt = f"""Create a concise web search query (max 100 words) from this problem description:
+
+{problem_description[:1000]}
+
+Extract the key concepts and create a focused search query that will find relevant technical information.
+Return ONLY the search query, no explanations."""
+
+            completion_params = build_completion_params(
+                model=self.model,
+                temperature=0,
+                max_tokens=200,
+                stream=False,
+                timeout=10,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert at creating concise search queries."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            )
+
+            response = completion(**completion_params)
+            query = response.choices[0].message.content if response.choices[0].message.content else ""
+            query = query.strip()
+
+            # Check if query is empty or too short
+            if not query or len(query) < 10:
+                print(f"   Warning: LLM returned empty/short query, using truncation")
+                return problem_description[:390]
+
+            # Ensure it's within limit
+            if len(query) <= 390:
+                print(f"   📝 Compressed query to {len(query)} chars")
+                return query
+            else:
+                # Fallback to truncation
+                print(f"   📝 Truncating LLM query from {len(query)} to 390 chars")
+                return query[:390]
+
+        except Exception as e:
+            print(f"   Warning: Query compression failed, using truncation: {e}")
+            # Fallback to simple truncation
+            return problem_description[:390]
+
+    def _search_problem_context(self, problem_description: str) -> str:
+        """
+        Search the web for context related to the problem description and summarize with LLM.
+
+        Args:
+            problem_description: The problem to search for
+
+        Returns:
+            Summarized search results as a string
+        """
+        if not self.enable_web_search:
+            return ""
+
+        try:
+            client = self._get_websearch_client()
+            if client is None:
+                return ""
+
+            # Create a concise search query (max 390 chars)
+            search_query = self._create_search_query(problem_description)
+
+            print(f"   🔍 Searching web with query ({len(search_query)} chars): {search_query[:100]}...")
+
+            # Perform search with extended timeout
+            response = client.search(
+                query=search_query,
+                max_results=5,
+                search_depth="advanced",
+                include_answer=True,
+                timeout=30,
+            )
+
+            print(f"   ✓ Found {len(response.get('results', []))} relevant sources")
+
+            # Summarize the results using LLM
+            return self._summarize_search_results(response, problem_description)
+
+        except Exception as e:
+            print(f"   Warning: Web search failed: {e}")
+            return ""
+
+    def process(self, input_text: str) -> str:
+        """Query the LLM with a prompt and return the response, optionally augmenting with web search."""
+        # If web search is enabled, augment the input with search context
+        original_length = len(input_text)
+        if self.enable_web_search:
+            search_context = self._search_problem_context(input_text)
+            print(f"   🔍 DEBUG: Search context returned length: {len(search_context)} chars")
+            if search_context:
+                input_text = search_context + input_text
+                print(f"   ✓ Augmented input with web context: {original_length} → {len(input_text)} chars")
+            else:
+                print(f"   ⚠️  No search context returned, using original input only")
+
+        self.add_to_history("user", input_text)
+        response_text = self.query_llm()
+        self.add_to_history("assistant", response_text)
+        return response_text
 
 
 class SoftwareEngineerAgent(Agent):
@@ -244,7 +544,11 @@ IMPORTANT:
 """
 
         super().__init__(
-            "Software Engineer", system_prompt, model=model, temperature=temperature, max_tokens=max_tokens
+            "Software Engineer",
+            system_prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
 
@@ -252,7 +556,12 @@ class TestEngineerAgent(Agent):
     """Agent specialized in testing and evaluating Python code implementations."""
 
     def __init__(
-        self, model: str, temperature: float = 0, pass_threshold: float = 90.0, max_tokens: int = 64000, enable_web_search: bool = False
+        self,
+        model: str,
+        temperature: float = 0,
+        pass_threshold: float = 90.0,
+        max_tokens: int = 64000,
+        enable_web_search: bool = False,
     ):
         self.pass_threshold = pass_threshold
         self.enable_web_search = enable_web_search
@@ -300,7 +609,11 @@ Your response MUST be a JSON object with the following structure:
 }}}}"""
 
         super().__init__(
-            "Test Engineer", system_prompt, model=model, temperature=temperature, max_tokens=max_tokens
+            "Test Engineer",
+            system_prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
     def process(self, input_text: str) -> str:
@@ -595,7 +908,11 @@ def pytest_runtest_makereport(item, call):
                 }
 
             try:
-                analyzer = PythonPackageAnalyzer(src_dir="src", enable_web_search=self.enable_web_search, model=self.model)
+                analyzer = PythonPackageAnalyzer(
+                    src_dir="src",
+                    enable_web_search=self.enable_web_search,
+                    model=self.model,
+                )
                 # Analyze code and get required packages
                 required_packages = analyzer.analyze()
                 print(f"Found {len(required_packages)} required packages:")
@@ -605,7 +922,9 @@ def pytest_runtest_makereport(item, call):
                 # Check for invalid imports
                 invalid_imports = analyzer.get_invalid_imports()
                 if invalid_imports:
-                    print(f"\n⚠️  Found {len(invalid_imports)} invalid/unresolved imports:")
+                    print(
+                        f"\n⚠️  Found {len(invalid_imports)} invalid/unresolved imports:"
+                    )
                     for import_name, error_msg in invalid_imports:
                         print(f"  ✗ {import_name}: {error_msg}")
 
@@ -645,9 +964,7 @@ def pytest_runtest_makereport(item, call):
 
                 if build_result.returncode != 0:
                     print(f"✗ Docker build failed!")
-                    print(
-                        f"Build stderr (last 500 chars):\n{build_result.stderr[-500:]}"
-                    )
+                    print(f"Build stderr (last 500 chars):\n{build_result.stderr[-500:]}")
                     return {
                         "success": False,
                         "stdout": build_result.stdout,
@@ -773,12 +1090,16 @@ def pytest_runtest_makereport(item, call):
         # Add invalid imports warning first (critical issue)
         if invalid_imports:
             compressed.append("⚠️  INVALID/UNRESOLVED IMPORTS:")
-            compressed.append("The following imports could not be resolved on PyPI and are likely hallucinated or misspelled:")
+            compressed.append(
+                "The following imports could not be resolved on PyPI and are likely hallucinated or misspelled:"
+            )
             for import_name, error_msg in invalid_imports:
                 compressed.append(f"  ✗ {import_name}")
                 compressed.append(f"    {error_msg}")
             compressed.append("\nPlease fix these imports by either:")
-            compressed.append("  1. Correcting the import name to match the actual PyPI package")
+            compressed.append(
+                "  1. Correcting the import name to match the actual PyPI package"
+            )
             compressed.append("  2. Using standard library modules instead")
             compressed.append("  3. Removing the import if it's not needed\n")
 
@@ -802,9 +1123,7 @@ def pytest_runtest_makereport(item, call):
         # Extract only failed tests from stdout
         if stdout:
             failed_tests = [
-                line
-                for line in stdout.split("\n")
-                if "FAILED" in line or "ERROR" in line
+                line for line in stdout.split("\n") if "FAILED" in line or "ERROR" in line
             ]
             if failed_tests:
                 compressed.append("\nFailed Tests:")
@@ -864,14 +1183,26 @@ class AgenticFlow:
     """Manages the flow of information between agents."""
 
     def __init__(
-        self, model: str, max_iterations=3, temperature=0, pass_threshold=90.0, max_tokens=64000, enable_web_search=False
+        self,
+        model: str,
+        max_iterations=3,
+        temperature=0,
+        pass_threshold=90.0,
+        max_tokens=64000,
+        enable_web_search=False,
     ):
-        self.architect = ArchitectAgent(model=model, temperature=temperature, max_tokens=max_tokens)
+        self.architect = ArchitectAgent(
+            model=model, temperature=temperature, max_tokens=max_tokens, enable_web_search=enable_web_search
+        )
         self.software_engineer = SoftwareEngineerAgent(
             model=model, temperature=temperature, max_tokens=max_tokens
         )
         self.test_engineer = TestEngineerAgent(
-            model=model, temperature=temperature, pass_threshold=pass_threshold, max_tokens=max_tokens, enable_web_search=enable_web_search
+            model=model,
+            temperature=temperature,
+            pass_threshold=pass_threshold,
+            max_tokens=max_tokens,
+            enable_web_search=enable_web_search,
         )
         self.max_iterations = max_iterations
         self.temperature = temperature
@@ -1118,9 +1449,7 @@ Provide a comprehensive test report including compilation status, test results, 
 
                 # Create architecture summary after first iteration
                 if iteration == 1 and architecture_summary is None:
-                    print(
-                        "📝 Summarizing architecture plan for subsequent iterations..."
-                    )
+                    print("📝 Summarizing architecture plan for subsequent iterations...")
                     architecture_summary = self._summarize_architecture_plan(
                         architecture_plan
                     )
@@ -1179,9 +1508,7 @@ Please provide a complete revised implementation that addresses all the issues m
 
                 # Create architecture summary after first iteration
                 if iteration == 1 and architecture_summary is None:
-                    print(
-                        "📝 Summarizing architecture plan for subsequent iterations..."
-                    )
+                    print("📝 Summarizing architecture plan for subsequent iterations...")
                     architecture_summary = self._summarize_architecture_plan(
                         architecture_plan
                     )
@@ -1375,15 +1702,19 @@ if __name__ == "__main__":
     if args.search:
         tavily_api_key = os.getenv("TAVILY_API_KEY")
         if not tavily_api_key:
-            print("\n⚠️  WARNING: Web search is enabled (--search true) but TAVILY_API_KEY environment variable is not set!")
+            print(
+                "\n⚠️  WARNING: Web search is enabled (--search true) but TAVILY_API_KEY environment variable is not set!"
+            )
             print("   Web search will not work without the API key.")
             print("   Options:")
             print("   1. Set TAVILY_API_KEY in your .env file")
-            print("   2. Export TAVILY_API_KEY in your shell: export TAVILY_API_KEY='your-key'")
+            print(
+                "   2. Export TAVILY_API_KEY in your shell: export TAVILY_API_KEY='your-key'"
+            )
             print("   3. Disable web search with --search false")
 
             response = input("\n   Continue anyway? (y/n): ").strip().lower()
-            if response != 'y':
+            if response != "y":
                 print("\n   Exiting. Please set TAVILY_API_KEY or disable web search.")
                 exit(1)
         else:
@@ -1403,14 +1734,14 @@ if __name__ == "__main__":
         if chosen_provider == "anthropic":
             model = "anthropic/claude-sonnet-4-5-20250929"  # Claude Sonnet 4.5 with extended output tokens
         elif chosen_provider == "openai":
-            model = "openai/gpt-5-mini"
+            model = "openai/gpt-4.1"
             print(
                 "⚠️  Warning: OpenAI streaming may occasionally hang. If it hangs, press Ctrl+C and retry with Anthropic."
             )
         else:
             print("Invalid provider selected. Defaulting to OpenAI gpt-5.")
             chosen_provider = "openai"
-            model = "openai/gpt-5-mini"
+            model = "openai/gpt-4.1"
 
         print(f"Using LLM provider: {chosen_provider}")
     # Load problem description
@@ -1481,9 +1812,7 @@ if __name__ == "__main__":
                 pass_pct = test_results["pass_percentage"]
                 passed = test_results.get("passed_count", 0)
                 total = test_results.get("total_count", 0)
-                print(
-                    f"📊 Final Test Results: {passed}/{total} passed ({pass_pct:.1f}%)"
-                )
+                print(f"📊 Final Test Results: {passed}/{total} passed ({pass_pct:.1f}%)")
                 if pass_pct >= args.pass_threshold:
                     print(f"✓ Meets passing grade (≥{args.pass_threshold}%)")
                 else:

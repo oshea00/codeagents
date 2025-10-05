@@ -186,6 +186,7 @@ flowchart TB
     L --> O
     L --> M
     I --> P
+    G -->|web search| O
     G -.->|uses| M
     H -.->|uses| M
     I -.->|uses| M
@@ -228,7 +229,12 @@ sequenceDiagram
     CLI->>Flow: Initialize with config
 
     Flow->>Arch: Design architecture
-    Arch->>Arch: Analyze requirements
+    alt --search true
+        Arch->>PyPI: Web search problem context (5 results, 30s timeout)
+        PyPI-->>Arch: Raw search results
+        Arch->>Arch: Summarize results with LLM (todos/insights)
+    end
+    Arch->>Arch: Analyze requirements with summarized context
     Arch-->>Flow: Architecture plan
 
     loop Iterations (max: --max-iterations)
@@ -273,9 +279,9 @@ sequenceDiagram
 - Environment setup (`.env` loading)
 
 **Agent Layer:**
-- **Architect Agent** - Analyzes problem descriptions and designs software architecture
+- **Architect Agent** - Analyzes problem descriptions with optional web search (5 results, 30s timeout, advanced depth), uses LLM to summarize findings into actionable todos/insights, and designs software architecture
 - **Software Engineer Agent** - Implements Python code based on architecture plans
-- **Test Engineer Agent** - Generates tests, runs Docker sandbox, provides feedback
+- **Test Engineer Agent** - Generates tests, runs Docker sandbox, validates packages with web search, provides feedback
 
 **Analysis & Validation Layer:**
 - **PythonPackageAnalyzer** - Extracts imports from code and validates them
