@@ -158,6 +158,48 @@ def validate_code_syntax(code, label="<string>"):
         return False, error_msg
 
 
+def apply_search_replace_edits(code, edits):
+    """Apply a list of search/replace edits to code sequentially.
+
+    Each edit is a (search_text, replace_text) tuple.
+    Returns (new_code, success, error_message).
+    """
+    for i, (search_text, replace_text) in enumerate(edits):
+        if search_text not in code:
+            return code, False, f"Edit block {i+1}: SEARCH text not found in code"
+        # Replace only the first occurrence to avoid unintended duplicates
+        code = code.replace(search_text, replace_text, 1)
+    return code, True, ""
+
+
+def parse_search_replace_blocks(response):
+    """Parse <<<SEARCH ... === ... REPLACE>>> blocks from LLM output.
+
+    Returns a list of (search_text, replace_text) tuples.
+    """
+    edits = []
+    pattern = r"<<<SEARCH\n(.*?)\n===\n(.*?)\nREPLACE>>>"
+    for match in re.finditer(pattern, response, re.DOTALL):
+        search_text = match.group(1)
+        replace_text = match.group(2)
+        edits.append((search_text, replace_text))
+    return edits
+
+
+def extract_edits_or_code(response):
+    """Determine whether LLM response contains search/replace edits or full code.
+
+    Returns ("edits", list_of_edit_tuples) or ("full", extracted_code).
+    """
+    if "<<<SEARCH" in response:
+        edits = parse_search_replace_blocks(response)
+        if edits:
+            return "edits", edits
+    # Fall through to full code extraction
+    code, _ = extract_code_from_response(response)
+    return "full", code
+
+
 class Agent:
     """Base agent class with core functionality."""
 
@@ -339,6 +381,22 @@ IMPORTANT:
 - All explanations must be Python comments inside the code block
 - Ensure the code is COMPLETE - do not truncate or abbreviate any part
 
+When revising existing code to fix issues, you may use SEARCH/REPLACE edit blocks
+instead of rewriting the entire file. This is more efficient for targeted fixes.
+
+Format for each edit:
+<<<SEARCH
+[exact existing code to find]
+===
+[replacement code]
+REPLACE>>>
+
+Rules:
+- The SEARCH section must match the existing code EXACTLY (including whitespace)
+- You may include multiple edit blocks for multiple changes
+- If the changes are too extensive (>50% of code), provide a complete rewrite instead
+- If you provide a complete rewrite, use the standard ```python code block format
+
 """
 
         super().__init__(
@@ -354,6 +412,7 @@ class TestEngineerAgent(Agent):
     ):
         self.pass_threshold = pass_threshold
         self.enable_web_search = enable_web_search
+        self.last_test_code = None
         system_prompt = f"""You are an expert Python test engineer. Your job is to analyze, compile, and test Python code implementations.
 
 Your responsibilities include:
@@ -414,11 +473,21 @@ Your response MUST be a JSON object with the following structure:
         )
         architecture_plan = arch_match.group(1).strip() if arch_match else ""
 
-        # Generate test code based on the implementation
-        test_code = self._generate_test_code(code_to_test, architecture_plan)
+        # Reuse previous test suite if available, regenerate only if tests can't execute
+        if self.last_test_code is not None:
+            print("Reusing previous test suite...")
+            test_code = self.last_test_code
+            test_results = self._run_in_docker_sandbox(code_to_test, test_code)
+            if not self._tests_executed_successfully(test_results):
+                print("Previous tests failed to execute, regenerating...")
+                test_code = self._generate_test_code(code_to_test, architecture_plan)
+                test_results = self._run_in_docker_sandbox(code_to_test, test_code)
+        else:
+            # First iteration: generate test code from scratch
+            test_code = self._generate_test_code(code_to_test, architecture_plan)
+            test_results = self._run_in_docker_sandbox(code_to_test, test_code)
 
-        # Run in Docker sandbox
-        test_results = self._run_in_docker_sandbox(code_to_test, test_code)
+        self.last_test_code = test_code
 
         # Compress test results - only keep critical information
         compressed_results = self._compress_sandbox_results(test_results)
@@ -494,6 +563,21 @@ Focus on providing actionable feedback and specific fixes for any issues found."
             response_text = json.dumps(basic_report, indent=2)
 
         return response_text
+
+    def _tests_executed_successfully(self, test_results: dict) -> bool:
+        """Check if tests actually executed successfully against the implementation.
+
+        Returns False when tests couldn't run (import/collection failure) OR when
+        all tests failed (0% pass rate), which indicates the test suite no longer
+        matches the implementation structure (e.g. AttributeError on renamed classes).
+        """
+        total = test_results.get("total_count", 0)
+        passed = test_results.get("passed_count", 0)
+        if total > 0 and passed > 0:
+            return True
+        if test_results.get("return_code", -1) == 0:
+            return True
+        return False
 
     def _generate_test_code(self, code_to_test: str, architecture_plan: str) -> str:
         """Generate test code for the implementation using GPT."""
@@ -1106,7 +1190,41 @@ Provide a comprehensive test report including compilation status, test results, 
                     # Extract clean code without markdown
                     prev_code, _ = extract_code_from_response(implementation)
 
-                    revision_prompt = f"""Your previous code implementation had some issues. Please revise your implementation to address the following:
+                    revision_prompt = f"""Your previous code implementation had some issues. Please fix the issues using SEARCH/REPLACE edit blocks. Only rewrite specific sections that need to change. If the changes are too extensive, you may provide a complete rewrite in a ```python block instead.
+
+ISSUES TO FIX:
+{todos}
+
+ARCHITECTURE REQUIREMENTS:
+{arch_context}
+
+YOUR PREVIOUS IMPLEMENTATION:
+```python
+{prev_code}
+```"""
+
+                    revision_response = self.software_engineer.process(revision_prompt)
+
+                    # Determine if response contains edits or full code
+                    response_type, payload = extract_edits_or_code(revision_response)
+
+                    if response_type == "edits":
+                        print(f"✏️ Applying {len(payload)} search/replace edit(s)...")
+                        new_code, edit_ok, edit_err = apply_search_replace_edits(prev_code, payload)
+                        if edit_ok:
+                            is_valid, error_msg = validate_code_syntax(new_code)
+                            if is_valid:
+                                implementation = f"```python\n{new_code}\n```"
+                            else:
+                                print(f"⚠️ Edit applied but syntax invalid: {error_msg}")
+                                edit_ok = False
+                                edit_err = error_msg
+                        if not edit_ok:
+                            print(f"⚠️ Edit application failed ({edit_err}), requesting full rewrite...")
+                            # Remove the failed exchange from history
+                            self.software_engineer.history.pop()  # assistant
+                            self.software_engineer.history.pop()  # user
+                            fallback_prompt = f"""Your previous code implementation had some issues. Please provide a complete revised implementation to address the following:
 
 ISSUES TO FIX:
 {todos}
@@ -1120,8 +1238,10 @@ YOUR PREVIOUS IMPLEMENTATION:
 ```
 
 Please provide a complete revised implementation that addresses all the issues mentioned above."""
-
-                    implementation = self.software_engineer.process(revision_prompt)
+                            implementation = self.software_engineer.process(fallback_prompt)
+                    else:
+                        # Full code response - use as-is
+                        implementation = revision_response
 
                     # Validate the revised code
                     extracted_code, _ = extract_code_from_response(implementation)
@@ -1166,7 +1286,41 @@ Please provide a complete revised implementation that addresses all the issues m
                     # Extract clean code without markdown
                     prev_code, _ = extract_code_from_response(implementation)
 
-                    revision_prompt = f"""Your previous code implementation had some issues. Please revise your implementation based on the following test report:
+                    revision_prompt = f"""Your previous code implementation had some issues. Please fix the issues using SEARCH/REPLACE edit blocks. Only rewrite specific sections that need to change. If the changes are too extensive, you may provide a complete rewrite in a ```python block instead.
+
+TEST REPORT (summary):
+{compressed_report}
+
+ARCHITECTURE REQUIREMENTS:
+{arch_context}
+
+YOUR PREVIOUS IMPLEMENTATION:
+```python
+{prev_code}
+```"""
+
+                    revision_response = self.software_engineer.process(revision_prompt)
+
+                    # Determine if response contains edits or full code
+                    response_type, payload = extract_edits_or_code(revision_response)
+
+                    if response_type == "edits":
+                        print(f"✏️ Applying {len(payload)} search/replace edit(s)...")
+                        new_code, edit_ok, edit_err = apply_search_replace_edits(prev_code, payload)
+                        if edit_ok:
+                            is_valid, error_msg = validate_code_syntax(new_code)
+                            if is_valid:
+                                implementation = f"```python\n{new_code}\n```"
+                            else:
+                                print(f"⚠️ Edit applied but syntax invalid: {error_msg}")
+                                edit_ok = False
+                                edit_err = error_msg
+                        if not edit_ok:
+                            print(f"⚠️ Edit application failed ({edit_err}), requesting full rewrite...")
+                            # Remove the failed exchange from history
+                            self.software_engineer.history.pop()  # assistant
+                            self.software_engineer.history.pop()  # user
+                            fallback_prompt = f"""Your previous code implementation had some issues. Please revise your implementation based on the following test report:
 
 TEST REPORT (summary):
 {compressed_report}
@@ -1180,8 +1334,10 @@ YOUR PREVIOUS IMPLEMENTATION:
 ```
 
 Please provide a complete revised implementation that addresses all the issues mentioned in the test report."""
-
-                    implementation = self.software_engineer.process(revision_prompt)
+                            implementation = self.software_engineer.process(fallback_prompt)
+                    else:
+                        # Full code response - use as-is
+                        implementation = revision_response
 
                     # Validate the revised code
                     extracted_code, _ = extract_code_from_response(implementation)
