@@ -1206,8 +1206,7 @@ Please provide a complete revised implementation that addresses all the issues m
 
     def save_results(self, filename: str = "agentic_flow_results.json"):
         """Save the results to a JSON file in a pretty format."""
-        src_dir = "src"
-        filename = os.path.join(src_dir, filename)
+        filename = os.path.join("src", filename)
         with open(filename, "w") as f:
             json.dump(self.results, f, indent=4, sort_keys=False)
         print(f"Results saved to {filename}")
@@ -1311,6 +1310,12 @@ if __name__ == "__main__":
         help="Maximum tokens to generate (default: 64000).",
     )
     parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="src",
+        help="Directory for generated code and results (default: src).",
+    )
+    parser.add_argument(
         "--search",
         type=lambda x: x.lower() == "true",
         default=True,
@@ -1389,6 +1394,8 @@ if __name__ == "__main__":
     print(f"   Max iterations: {args.max_iterations}")
     print(f"   Pass threshold: {args.pass_threshold}%")
     print(f"   Max tokens: {args.max_tokens}")
+    if args.output_dir != "src":
+        print(f"   Output dir: {args.output_dir}")
 
     start_time = time.time()
     flow = AgenticFlow(
@@ -1451,4 +1458,14 @@ if __name__ == "__main__":
             print(json.dumps(report, indent=2))
 
     flow.save_results()
+
+    # Copy results to output directory if specified
+    if args.output_dir != "src":
+        import shutil
+
+        if os.path.exists(args.output_dir):
+            shutil.rmtree(args.output_dir)
+        shutil.copytree("src", args.output_dir)
+        print(f"📁 Output copied to {args.output_dir}/")
+
     print("\n✅ Process completed successfully!")

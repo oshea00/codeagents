@@ -28,6 +28,7 @@ python agents_from_scratch_docker.py \
   --max-iterations <n>       # default: 2 \
   --pass-threshold <percent> # default: 90.0 \
   --max-tokens <n>           # default: 64000 \
+  --output-dir <path>        # default: src \
   --search <true|false>      # default: true (Tavily web search for package validation)
 
 # Code metrics
