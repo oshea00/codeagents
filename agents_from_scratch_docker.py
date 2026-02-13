@@ -2,11 +2,16 @@ import os
 import json
 import time
 import re
+import warnings
 from typing import List, Dict, Any, Optional
-import argparse  # Add argparse import
+import argparse
 from dotenv import load_dotenv
 from docker_test import PythonPackageAnalyzer
 from litellm import completion
+
+# Suppress known litellm Pydantic serialization warnings for Responses API models
+# (e.g. gpt-5.2-codex). See https://github.com/BerriAI/litellm/issues/17631
+warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
 
 
 def build_completion_params(
@@ -22,12 +27,18 @@ def build_completion_params(
 
     OpenAI models:
     - gpt-4.1, gpt-4o: support temperature and max_tokens
-    - gpt-5, gpt-5-*: do not support temperature, use max_completion_tokens instead of max_tokens
+    - gpt-5, gpt-5.2, gpt-5.2-codex: do not support temperature,
+      use max_completion_tokens instead of max_tokens (128K max output)
 
-    Anthropic models (claude-*): support temperature and max_tokens (same as gpt-4.1, gpt-4o)
+    Anthropic models:
+    - claude-sonnet-4-5-20250929: support temperature and max_tokens
+    - claude-opus-4-6: support temperature and max_tokens (128K max output)
+
+    Note: gpt-5.2-codex uses OpenAI's Responses API; litellm >= 1.81.6
+    auto-routes completion() calls to it.
 
     Args:
-        model: The model identifier
+        model: The model identifier (e.g., 'openai/gpt-5.2', 'anthropic/claude-opus-4-6')
         temperature: Temperature setting (ignored for gpt-5 models)
         max_tokens: Maximum tokens to generate
         stream: Whether to stream the response
@@ -58,6 +69,93 @@ def build_completion_params(
         params["max_tokens"] = max_tokens
 
     return params
+
+
+def extract_code_from_response(response, debug_file=None):
+    """Extract Python code from LLM response, preferring the last match.
+
+    Returns (code, confidence) where confidence is one of:
+    'matched_python_block', 'matched_generic_block', 'line_based_extraction', 'raw_fallback'
+    """
+    if debug_file:
+        with open(debug_file, "w") as f:
+            f.write(response)
+
+    # Find all python-tagged code blocks, use the last one
+    python_blocks = list(re.finditer(r"```python\s*([\s\S]*?)\s*```", response))
+    if python_blocks:
+        code = python_blocks[-1].group(1)
+        print(f"✓ Matched python code block ({len(python_blocks)} found, using last)")
+        return code, "matched_python_block"
+
+    # Find all generic code blocks, filter out known non-Python languages
+    non_python_langs = {
+        "json", "bash", "sh", "shell", "yaml", "yml", "xml", "html",
+        "css", "javascript", "js", "typescript", "ts", "sql", "toml",
+        "ini", "dockerfile", "text", "txt", "markdown", "md",
+    }
+    generic_blocks = []
+    for match in re.finditer(r"```(\w*)\s*([\s\S]*?)\s*```", response):
+        lang = match.group(1).lower()
+        if lang not in non_python_langs:
+            generic_blocks.append(match.group(2))
+
+    if generic_blocks:
+        code = generic_blocks[-1]
+        print(f"✓ Matched generic code block ({len(generic_blocks)} found, using last)")
+        return code, "matched_generic_block"
+
+    # Line-based extraction for responses starting with backticks
+    if response.strip().startswith("```"):
+        print("Found backticks at start, attempting line-based extraction...")
+        lines = response.strip().split("\n")
+        start_idx = 1 if lines[0].startswith("```") else 0
+        end_idx = len(lines)
+        for i in range(len(lines) - 1, 0, -1):
+            if lines[i].strip() == "```":
+                end_idx = i
+                break
+        code = "\n".join(lines[start_idx:end_idx])
+        print(f"Extracted {len(code)} characters of code by line-based parsing")
+        return code, "line_based_extraction"
+
+    print("Warning: No code block found. Treating entire response as code")
+    return response, "raw_fallback"
+
+
+def extract_json_from_response(text):
+    """Extract JSON from text that might contain other content."""
+    # Try markdown-fenced JSON blocks first
+    json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if json_match:
+        return json_match.group(1)
+
+    # Use raw_decode to find the first structurally valid JSON object
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch == '{':
+            try:
+                _, end = decoder.raw_decode(text, i)
+                return text[i:end]
+            except json.JSONDecodeError:
+                continue
+
+    return text
+
+
+def validate_code_syntax(code, label="<string>"):
+    """Validate that code has correct Python syntax.
+
+    Returns (is_valid, error_message).
+    """
+    try:
+        compile(code, label, "exec")
+        return True, ""
+    except SyntaxError as e:
+        error_msg = f"Syntax error at line {e.lineno}: {e.msg}"
+        if e.text:
+            error_msg += f"\n  {e.text.strip()}"
+        return False, error_msg
 
 
 class Agent:
@@ -307,24 +405,7 @@ Your response MUST be a JSON object with the following structure:
         """Process input with the agent, run code in Docker sandbox, and return the response."""
         self.add_to_history("user", input_text)
         # Extract code from input
-        import re
-
-        code_match = re.search(r"```python\s*([\s\S]*?)\s*```", input_text)
-
-        if not code_match:
-            # Try without language specifier
-            code_match = re.search(r"```\s*([\s\S]*?)\s*```", input_text)
-
-        if not code_match:
-            # No code block found - assume the entire input is code
-            # This handles cases where the engineer didn't use markdown
-            print(
-                "Warning: No code block found in engineer's output, treating entire response as code"
-            )
-            code_to_test = input_text
-        else:
-            # Extract the code from the matched group
-            code_to_test = code_match.group(1)
+        code_to_test, _ = extract_code_from_response(input_text)
 
         # Extract architecture plan for context
         arch_match = re.search(
@@ -361,7 +442,7 @@ Focus on providing actionable feedback and specific fixes for any issues found."
 
         # Try to ensure the response is valid JSON
         try:
-            response_text = self._extract_json(response_text)
+            response_text = extract_json_from_response(response_text)
             # Validate by parsing
             json.loads(response_text)
         except:
@@ -450,40 +531,14 @@ IMPORTANT: Return ONLY the raw Python test code. Do NOT wrap it in markdown code
 
         test_code_raw = self.query_llm(prompt_messages)
 
-        # Extract just the code if it's in a code block (try multiple patterns)
-        # Pattern 1: Standard markdown code block
-        test_code_match = re.search(r"```python\s*([\s\S]*?)\s*```", test_code_raw)
-        if test_code_match:
-            test_code = test_code_match.group(1)
-        else:
-            # Pattern 2: Code block without language specifier
-            test_code_match = re.search(r"```\s*([\s\S]*?)\s*```", test_code_raw)
-            if test_code_match:
-                test_code = test_code_match.group(1)
-            else:
-                # No code block found, use raw output
-                test_code = test_code_raw
-
-        # Clean up any remaining markdown artifacts at the start/end
-        test_code = test_code.strip()
-        if test_code.startswith("```"):
-            # Remove any leading ``` that might have been missed
-            lines = test_code.split("\n")
-            if lines[0].startswith("```"):
-                test_code = "\n".join(lines[1:])
-        if test_code.endswith("```"):
-            # Remove any trailing ``` that might have been missed
-            lines = test_code.split("\n")
-            if lines[-1].strip() == "```":
-                test_code = "\n".join(lines[:-1])
-
+        # Extract test code from response
+        test_code, _ = extract_code_from_response(test_code_raw)
         test_code = test_code.strip()
 
         # Validate that the test code has valid Python syntax
-        try:
-            compile(test_code, "<test_code>", "exec")
-        except SyntaxError as e:
-            print(f"Warning: Generated test code has syntax error: {e}")
+        is_valid, error_msg = validate_code_syntax(test_code, "<test_code>")
+        if not is_valid:
+            print(f"Warning: Generated test code has syntax error: {error_msg}")
             print("Attempting to generate simpler fallback tests...")
             # Generate a minimal fallback test
             test_code = f"""import unittest
@@ -680,8 +735,6 @@ def pytest_runtest_makereport(item, call):
                 # Look for pytest summary line like "2 failed, 94 passed in 0.31s"
                 for line in lines:
                     if " passed" in line or " failed" in line:
-                        import re
-
                         # Extract numbers from summary line
                         passed_match = re.search(r"(\d+) passed", line)
                         failed_match = re.search(r"(\d+) failed", line)
@@ -842,22 +895,6 @@ def pytest_runtest_makereport(item, call):
 
         return "\n".join(compressed)
 
-    def _extract_json(self, text):
-        """Attempt to extract JSON from a text that might contain other content."""
-        # Try to find JSON between triple backticks
-        import re
-
-        json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-        if json_match:
-            return json_match.group(1)
-
-        # If no backticks, look for text that starts with { and ends with }
-        json_match = re.search(r"(\{[\s\S]*\})", text)
-        if json_match:
-            return json_match.group(1)
-
-        # If all else fails, return the original text
-        return text
 
 
 class AgenticFlow:
@@ -887,83 +924,6 @@ class AgenticFlow:
             "iterations_required": 0,
             "success": False,
         }
-
-    def _extract_code_from_response(self, response: str) -> str:
-        """Extract Python code from engineer's response, handling various formats."""
-        import re
-
-        # Debug: Save response to file for inspection
-        with open("debug_response.txt", "w") as f:
-            f.write(response)
-
-        # Try to find code in markdown code blocks with python identifier
-        code_match = re.search(r"```python\n([\s\S]*?)\n```", response)
-        if code_match:
-            print(f"✓ Matched pattern: ```python\\n...\\n```")
-            return code_match.group(1)
-
-        # Try with optional whitespace/newlines around markers
-        code_match = re.search(r"```python\s*([\s\S]*?)\s*```", response)
-        if code_match:
-            print(f"✓ Matched pattern: ```python\\s*...\\s*```")
-            return code_match.group(1)
-
-        # Try code block without language specifier
-        code_match = re.search(r"```\n([\s\S]*?)\n```", response)
-        if code_match:
-            print(f"✓ Matched pattern: ```\\n...\\n```")
-            return code_match.group(1)
-
-        code_match = re.search(r"```\s*([\s\S]*?)\s*```", response)
-        if code_match:
-            print(f"✓ Matched pattern: ```\\s*...\\s*```")
-            return code_match.group(1)
-
-        # Debug: show first 200 chars to understand the format
-        print(f"Warning: No code block markers found. Response starts with:")
-        print(f"  {response[:200]!r}")
-
-        # Last attempt: check if response literally starts with the backticks
-        # Sometimes the response has the backticks but our regex isn't matching
-        if response.strip().startswith("```"):
-            print("Found backticks at start, attempting line-based extraction...")
-            lines = response.strip().split("\n")
-            # Find where code block starts and ends
-            start_idx = 0
-            end_idx = len(lines)
-
-            # Skip first line if it's just ```python or ```
-            if lines[0].startswith("```"):
-                start_idx = 1
-
-            # Find closing ```
-            for i in range(len(lines) - 1, 0, -1):
-                if lines[i].strip() == "```":
-                    end_idx = i
-                    break
-
-            code = "\n".join(lines[start_idx:end_idx])
-            print(f"Extracted {len(code)} characters of code by line-based parsing")
-            return code
-
-        print("Treating entire response as code")
-        return response
-
-    def _validate_code_syntax(self, code: str) -> tuple[bool, str]:
-        """
-        Validate that the code has correct Python syntax.
-
-        Returns:
-            (is_valid, error_message)
-        """
-        try:
-            compile(code, "<string>", "exec")
-            return True, ""
-        except SyntaxError as e:
-            error_msg = f"Syntax error at line {e.lineno}: {e.msg}"
-            if e.text:
-                error_msg += f"\n  {e.text.strip()}"
-            return False, error_msg
 
     def _compress_test_report_to_todos(self, test_report: dict) -> str:
         """Extract actionable todos from a test report."""
@@ -1056,8 +1016,8 @@ Include proper error handling, documentation, and follow best practices for Pyth
         implementation = self.software_engineer.process(implementation_prompt)
 
         # Extract and validate the generated code
-        extracted_code = self._extract_code_from_response(implementation)
-        is_valid, error_msg = self._validate_code_syntax(extracted_code)
+        extracted_code, _ = extract_code_from_response(implementation, debug_file="debug_response.txt")
+        is_valid, error_msg = validate_code_syntax(extracted_code)
 
         if not is_valid:
             print(f"⚠️ Warning: Generated code has syntax errors:")
@@ -1076,7 +1036,11 @@ Include proper error handling, documentation, and follow best practices for Pyth
             print(f"   Pass threshold: {self.pass_threshold}%")
 
             # Extract just the code from the implementation (remove markdown if present)
-            implementation_code = self._extract_code_from_response(implementation)
+            implementation_code, _ = extract_code_from_response(implementation)
+            is_valid, error_msg = validate_code_syntax(implementation_code)
+            if not is_valid:
+                print(f"⚠️ Warning: Code has syntax errors before testing:")
+                print(f"  {error_msg}")
 
             # Use full architecture plan for first iteration, summary for subsequent ones
             architecture_context = (
@@ -1100,7 +1064,7 @@ Provide a comprehensive test report including compilation status, test results, 
             # Try to parse the test report as JSON
             try:
                 # Extract JSON from the response if it's not pure JSON
-                test_report_str = self._extract_json(test_report_str)
+                test_report_str = extract_json_from_response(test_report_str)
                 test_report = json.loads(test_report_str)
                 self.results["test_reports"].append(test_report)
 
@@ -1140,7 +1104,7 @@ Provide a comprehensive test report including compilation status, test results, 
                     )
 
                     # Extract clean code without markdown
-                    prev_code = self._extract_code_from_response(implementation)
+                    prev_code, _ = extract_code_from_response(implementation)
 
                     revision_prompt = f"""Your previous code implementation had some issues. Please revise your implementation to address the following:
 
@@ -1160,8 +1124,8 @@ Please provide a complete revised implementation that addresses all the issues m
                     implementation = self.software_engineer.process(revision_prompt)
 
                     # Validate the revised code
-                    extracted_code = self._extract_code_from_response(implementation)
-                    is_valid, error_msg = self._validate_code_syntax(extracted_code)
+                    extracted_code, _ = extract_code_from_response(implementation)
+                    is_valid, error_msg = validate_code_syntax(extracted_code)
 
                     if not is_valid:
                         print(f"⚠️ Warning: Revised code still has syntax errors:")
@@ -1200,7 +1164,7 @@ Please provide a complete revised implementation that addresses all the issues m
                     )
 
                     # Extract clean code without markdown
-                    prev_code = self._extract_code_from_response(implementation)
+                    prev_code, _ = extract_code_from_response(implementation)
 
                     revision_prompt = f"""Your previous code implementation had some issues. Please revise your implementation based on the following test report:
 
@@ -1220,8 +1184,8 @@ Please provide a complete revised implementation that addresses all the issues m
                     implementation = self.software_engineer.process(revision_prompt)
 
                     # Validate the revised code
-                    extracted_code = self._extract_code_from_response(implementation)
-                    is_valid, error_msg = self._validate_code_syntax(extracted_code)
+                    extracted_code, _ = extract_code_from_response(implementation)
+                    is_valid, error_msg = validate_code_syntax(extracted_code)
 
                     if not is_valid:
                         print(f"⚠️ Warning: Revised code still has syntax errors:")
@@ -1239,23 +1203,6 @@ Please provide a complete revised implementation that addresses all the issues m
         self.results["success"] = success
 
         return self.results
-
-    def _extract_json(self, text):
-        """Attempt to extract JSON from a text that might contain other content."""
-        # Try to find JSON between triple backticks
-        import re
-
-        json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-        if json_match:
-            return json_match.group(1)
-
-        # If no backticks, look for text that starts with { and ends with }
-        json_match = re.search(r"(\{[\s\S]*\})", text)
-        if json_match:
-            return json_match.group(1)
-
-        # If all else fails, return the original text
-        return text
 
     def save_results(self, filename: str = "agentic_flow_results.json"):
         """Save the results to a JSON file in a pretty format."""
@@ -1355,7 +1302,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        help="Model name to use (e.g., openai/gpt-5-mini, anthropic/claude-sonnet-4-5-20250929).",
+        help="Model name to use (e.g., openai/gpt-5.2, openai/gpt-5.2-codex, anthropic/claude-opus-4-6).",
     )
     parser.add_argument(
         "--max-tokens",
@@ -1395,24 +1342,24 @@ if __name__ == "__main__":
         print(f"Using model from command line: {model}")
     else:
         print(
-            "\nℹ️  Note: Anthropic (Claude) is recommended for better reliability and timeout handling."
+            "\nℹ️  Tip: Use --model to specify a model directly, e.g.:"
+        )
+        print(
+            "   --model openai/gpt-5.2-codex  (optimized for coding tasks)"
         )
         chosen_provider = (
             input("🌐 Choose LLM provider (openai, anthropic): ").strip().lower()
         )
         if chosen_provider == "anthropic":
-            model = "anthropic/claude-sonnet-4-5-20250929"  # Claude Sonnet 4.5 with extended output tokens
+            model = "anthropic/claude-opus-4-6"
         elif chosen_provider == "openai":
-            model = "openai/gpt-5-mini"
-            print(
-                "⚠️  Warning: OpenAI streaming may occasionally hang. If it hangs, press Ctrl+C and retry with Anthropic."
-            )
+            model = "openai/gpt-5.2"
         else:
-            print("Invalid provider selected. Defaulting to OpenAI gpt-5.")
+            print("Invalid provider selected. Defaulting to OpenAI gpt-5.2.")
             chosen_provider = "openai"
-            model = "openai/gpt-5-mini"
+            model = "openai/gpt-5.2"
 
-        print(f"Using LLM provider: {chosen_provider}")
+        print(f"Using model: {model}")
     # Load problem description
     if args.description_file:
         try:
